@@ -1,0 +1,161 @@
+// Airport, runway, fix and procedure data for the fictional Ravenwood International (EGRV).
+const AIRPORT = {
+  icao: 'EGRV',
+  name: 'Ravenwood International',
+  elevation: 0,
+  transAlt: 6000,
+  radarRange: 55, // aircraft beyond this are removed
+  ctrRadius: 50, // airspace boundary drawn on the scope
+};
+
+// ---- Runways: two parallels, 08L/26R (north) and 08R/26L (south) ----
+const RUNWAYS = (() => {
+  const LEN = 2.0; // nm (~3700 m)
+  const SEP = 0.75; // nm between centrelines
+  const v = Geo.vec(260);
+  const south = Geo.vec(170); // left of 260
+  const centres = {
+    S: { x: (south.x * SEP) / 2, y: (south.y * SEP) / 2 },
+    N: { x: (-south.x * SEP) / 2, y: (-south.y * SEP) / 2 },
+  };
+  const east = (c) => ({ x: c.x - (v.x * LEN) / 2, y: c.y - (v.y * LEN) / 2 });
+  const west = (c) => ({ x: c.x + (v.x * LEN) / 2, y: c.y + (v.y * LEN) / 2 });
+  const r = {
+    '26L': { id: '26L', heading: 260, thr: east(centres.S), opp: west(centres.S), phys: 'S', recip: '08R' },
+    '08R': { id: '08R', heading: 80, thr: west(centres.S), opp: east(centres.S), phys: 'S', recip: '26L' },
+    '26R': { id: '26R', heading: 260, thr: east(centres.N), opp: west(centres.N), phys: 'N', recip: '08L' },
+    '08L': { id: '08L', heading: 80, thr: west(centres.N), opp: east(centres.N), phys: 'N', recip: '26R' },
+  };
+  return r;
+})();
+
+// Point on the approach to a runway: `along` nm before the threshold,
+// `lateral` nm to the right (+) / left (-) of an aircraft flying the final approach course.
+function approachPoint(rwyId, along, lateral = 0) {
+  const r = RUNWAYS[rwyId];
+  const p = Geo.offset(r.thr, r.heading + 180, along);
+  return Geo.offset(p, r.heading + 90, lateral);
+}
+
+// ---- Fixes ----
+const FIXES = {};
+function addFix(name, p, type, alt) {
+  FIXES[name] = { name, x: p.x, y: p.y, type, alt };
+}
+
+// Entry fixes (arrivals spawn here)
+addFix('BOGNA', { x: 0, y: 46 }, 'entry');
+addFix('TIMBA', { x: 33, y: 33 }, 'entry');
+addFix('LAMSO', { x: 46, y: 3 }, 'entry');
+addFix('KOPAS', { x: 31, y: -34 }, 'entry');
+addFix('DEXOR', { x: -3, y: -46 }, 'entry');
+addFix('VAREN', { x: -46, y: -6 }, 'entry');
+addFix('MIRLO', { x: -31, y: 34 }, 'entry');
+// Exit fixes (departures hand off around here)
+addFix('NOVAL', { x: -10, y: 43 }, 'exit');
+addFix('ESTOR', { x: 43, y: 17 }, 'exit');
+addFix('SUDAN', { x: 10, y: -43 }, 'exit');
+addFix('WOLFE', { x: -43, y: 12 }, 'exit');
+// Enroute / transition fixes
+addFix('SOTAX', { x: 2, y: 25 }, 'enroute');
+addFix('GIBRA', { x: 26, y: 4 }, 'enroute');
+addFix('NEKOS', { x: 0, y: -25 }, 'enroute');
+addFix('ULMAR', { x: -26, y: 0 }, 'enroute');
+addFix('FOXEN', { x: -6, y: -14 }, 'enroute');
+addFix('NIBEX', { x: -13, y: 15 }, 'enroute');
+addFix('ETRAX', { x: 13, y: 27 }, 'enroute');
+addFix('SIPOR', { x: -11, y: -16 }, 'enroute');
+addFix('EBRIK', { x: 16, y: -20 }, 'enroute');
+
+// Approach fixes: IAF (15 nm, 8 nm offset), IF (11 nm), FAF (6.3 nm, on the 3° glideslope at 2000 ft)
+const APPROACHES = {
+  '26R': ['NORAX', 'MELAN', 'RIVOS'],
+  '26L': ['SUREK', 'TOBEK', 'LONKA'],
+  '08L': ['KELVO', 'PIRAM', 'ODINA'],
+  '08R': ['ZUBIN', 'HALOR', 'ESKIN'],
+};
+const IAF_SIDE = { '26R': 8, '26L': -8, '08L': -8, '08R': 8 }; // outer side of each runway
+for (const [rwy, [iaf, ifx, faf]] of Object.entries(APPROACHES)) {
+  addFix(iaf, approachPoint(rwy, 15, IAF_SIDE[rwy]), 'iaf', 4000);
+  addFix(ifx, approachPoint(rwy, 11, 0), 'if', 3000);
+  addFix(faf, approachPoint(rwy, 6.3, 0), 'faf', 2000);
+}
+
+// SID first fixes: 4 nm beyond the departure end
+const SID_FIRST = { '26R': 'ROKEL', '26L': 'SALMA', '08L': 'KORAN', '08R': 'LIPEX' };
+for (const [rwy, name] of Object.entries(SID_FIRST)) {
+  const r = RUNWAYS[rwy];
+  addFix(name, Geo.offset(r.opp, r.heading, 4), 'sid');
+}
+
+// ---- Procedures per runway configuration ----
+const PROCS = {
+  '26': {
+    stars: [
+      { name: 'BOGNA1R', rwy: '26R', fixes: ['BOGNA', 'SOTAX', 'NORAX'] },
+      { name: 'MIRLO1R', rwy: '26R', fixes: ['MIRLO', 'SOTAX', 'NORAX'] },
+      { name: 'TIMBA1R', rwy: '26R', fixes: ['TIMBA', 'NORAX'] },
+      { name: 'LAMSO1L', rwy: '26L', fixes: ['LAMSO', 'GIBRA', 'SUREK'] },
+      { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'SUREK'] },
+      { name: 'DEXOR1L', rwy: '26L', fixes: ['DEXOR', 'NEKOS', 'SUREK'] },
+      { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'ULMAR', 'FOXEN', 'SUREK'] },
+    ],
+    sids: [
+      { name: 'NOVAL2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'NOVAL'] },
+      { name: 'ESTOR2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'ETRAX', 'ESTOR'] },
+      { name: 'WOLFE2L', rwy: '26L', fixes: ['SALMA', 'WOLFE'] },
+      { name: 'SUDAN2L', rwy: '26L', fixes: ['SALMA', 'SIPOR', 'SUDAN'] },
+    ],
+  },
+  '08': {
+    stars: [
+      { name: 'BOGNA1D', rwy: '08L', fixes: ['BOGNA', 'SOTAX', 'KELVO'] },
+      { name: 'MIRLO1D', rwy: '08L', fixes: ['MIRLO', 'KELVO'] },
+      { name: 'TIMBA1D', rwy: '08L', fixes: ['TIMBA', 'SOTAX', 'KELVO'] },
+      { name: 'LAMSO1E', rwy: '08R', fixes: ['LAMSO', 'GIBRA', 'NEKOS', 'ZUBIN'] },
+      { name: 'KOPAS1E', rwy: '08R', fixes: ['KOPAS', 'NEKOS', 'ZUBIN'] },
+      { name: 'DEXOR1E', rwy: '08R', fixes: ['DEXOR', 'NEKOS', 'ZUBIN'] },
+      { name: 'VAREN1E', rwy: '08R', fixes: ['VAREN', 'ZUBIN'] },
+    ],
+    sids: [
+      { name: 'NOVAL3L', rwy: '08L', fixes: ['KORAN', 'ETRAX', 'NOVAL'] },
+      { name: 'ESTOR3L', rwy: '08L', fixes: ['KORAN', 'ESTOR'] },
+      { name: 'SUDAN3R', rwy: '08R', fixes: ['LIPEX', 'EBRIK', 'SUDAN'] },
+      { name: 'WOLFE3R', rwy: '08R', fixes: ['LIPEX', 'SIPOR', 'WOLFE'] },
+    ],
+  },
+};
+const SID_TOP = 6000; // initial climb altitude on all SIDs
+
+// ---- Aircraft performance ----
+// vapp: final approach speed, vr: rotate, max: max IAS, climb/desc: ft/min, turn: deg/s
+const TYPES = {
+  A320: { wake: 'M', vapp: 138, vr: 145, max: 340, climb: 2500, desc: 2200, turn: 3 },
+  A321: { wake: 'M', vapp: 142, vr: 150, max: 340, climb: 2300, desc: 2200, turn: 3 },
+  B738: { wake: 'M', vapp: 145, vr: 150, max: 340, climb: 2500, desc: 2200, turn: 3 },
+  E190: { wake: 'M', vapp: 130, vr: 135, max: 320, climb: 2800, desc: 2200, turn: 3 },
+  DH8D: { wake: 'M', vapp: 120, vr: 115, max: 280, climb: 1800, desc: 1800, turn: 3 },
+  A359: { wake: 'H', vapp: 145, vr: 155, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
+  B77W: { wake: 'H', vapp: 150, vr: 165, max: 340, climb: 2000, desc: 2000, turn: 2.5 },
+  B744: { wake: 'H', vapp: 155, vr: 165, max: 340, climb: 1800, desc: 2000, turn: 2.5 },
+};
+const TYPE_WEIGHTS = ['A320', 'A320', 'A321', 'B738', 'B738', 'E190', 'DH8D', 'A359', 'B77W', 'B744'];
+
+const AIRLINES = [
+  { icao: 'BAW', name: 'Speedbird' }, { icao: 'EZY', name: 'Easy' }, { icao: 'RYR', name: 'Ryanair' },
+  { icao: 'DLH', name: 'Lufthansa' }, { icao: 'AFR', name: 'Airfrans' }, { icao: 'KLM', name: 'KLM' },
+  { icao: 'UAE', name: 'Emirates' }, { icao: 'VIR', name: 'Virgin' }, { icao: 'SAS', name: 'Scandinavian' },
+  { icao: 'IBE', name: 'Iberia' }, { icao: 'AAL', name: 'American' }, { icao: 'UAL', name: 'United' },
+];
+
+// Outstations by direction, used for flight plan origins/destinations.
+const OUTSTATIONS = {
+  N: ['EKCH', 'ENGM', 'ESSA', 'EGPH'],
+  E: ['EDDF', 'EDDM', 'LOWW', 'EHAM'],
+  S: ['LEMD', 'LFMN', 'LIRF', 'LPPT'],
+  W: ['KJFK', 'EIDW', 'CYYZ', 'KBOS'],
+};
+const FIX_DIRECTION = {
+  BOGNA: 'N', MIRLO: 'N', TIMBA: 'N', LAMSO: 'E', KOPAS: 'S', DEXOR: 'S', VAREN: 'W',
+  NOVAL: 'N', ESTOR: 'E', SUDAN: 'S', WOLFE: 'W',
+};

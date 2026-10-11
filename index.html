@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar ATC Sim</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand"><b>EGRV</b> Ravenwood APP/TWR</div>
+    <div class="item"><label>UTC</label><span id="clock">14:00:00Z</span></div>
+    <div class="item"><label>Score</label><span id="score">0</span></div>
+    <div class="item stats" id="stats"></div>
+    <div class="item"><label>RWY</label><span id="active-rwys"></span></div>
+    <div class="spacer"></div>
+    <div class="controls">
+      <select id="sel-config" title="Runway configuration">
+        <option value="26">Config 26</option>
+        <option value="08">Config 08</option>
+      </select>
+      <select id="sel-traffic" title="Traffic density">
+        <option value="low">Traffic: low</option>
+        <option value="med">Traffic: med</option>
+        <option value="high">Traffic: high</option>
+      </select>
+      <select id="sel-routes" title="Route lines">
+        <option value="all">Routes: all</option>
+        <option value="sel">Routes: selected</option>
+        <option value="off">Routes: off</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="chk-procs"> Procs</label>
+      <label class="chk"><input type="checkbox" id="chk-voice"> Voice</label>
+      <button id="btn-pause">❚❚ Pause</button>
+      <button id="btn-x1">x1</button><button id="btn-x2">x2</button><button id="btn-x4">x4</button>
+      <button id="btn-help">? Help</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="scope">
+      <canvas id="radar"></canvas>
+      <div id="legend">
+        <span><i class="ln dep"></i>Departure route</span>
+        <span><i class="ln arr"></i>Arrival route</span>
+        <span>Click aircraft = select · click fix = direct · right-click = heading · drag = pan · wheel = zoom</span>
+      </div>
+    </section>
+    <aside id="side">
+      <div id="card"><div id="card-info"></div><div id="card-quick" class="quick"></div></div>
+      <div id="strips"></div>
+    </aside>
+  </main>
+
+  <footer id="bottom">
+    <div id="log"></div>
+    <div id="cmdline">
+      <span id="cmd-target">—</span>
+      <span class="prompt">&gt;</span>
+      <input id="cmd" autocomplete="off" spellcheck="false" autofocus
+        placeholder="e.g.  caf  ·  cto  ·  h 270 a 4000 s 210  ·  dct NORAX  ·  i 26L  ·  app 26R  ·  BAW123 ho">
+    </div>
+  </footer>
+
+  <div id="help">
+    <div class="panel">
+      <button id="help-close">×</button>
+      <h2>How to play</h2>
+      <p>You are approach and tower at Ravenwood International. <b>Arrivals</b> (magenta routes) enter on STARs and must be
+        descended and cleared for an approach. <b>Departures</b> wait at the holding point: give them their clearance
+        (<code>caf</code>), clear them for take-off (<code>cto</code>), climb them, and hand them off (<code>ho</code>)
+        once they're above FL100 and 20 nm out. They follow their SID (blue route).</p>
+      <p>Keep <b>3 nm or 1000 ft</b> between airborne aircraft. Yellow tags = predicted conflict, red = separation lost.</p>
+      <p>Type a callsign (or just its digits) followed by commands, or select an aircraft and type commands only.
+        Several commands can go on one line: <code>BAW123 tl 180 d 4000 s 220</code>.</p>
+      <h2>Commands</h2>
+      <table id="help-table"></table>
+      <h2>Scoring</h2>
+      <p>Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 · separation loss −50 ·
+        departure leaving without handoff −50 · arrival lost −100.</p>
+      <p class="tip">Tip: arrivals descend on their own only after <code>app RWY</code>. With <code>i RWY</code> you must vector
+        them onto the localizer (≈30° intercept) and descend them to 3000–4000 ft first — the glideslope is captured from below.</p>
+    </div>
+  </div>
+
+  <script src="js/geo.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/aircraft.js"></script>
+  <script src="js/commands.js"></script>
+  <script src="js/radar.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
