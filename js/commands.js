@@ -14,10 +14,12 @@ const COMMAND_HELP = [
   ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
-  ['HO', 'Hand off / contact next sector (departures)'],
+  ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm'],
+  ['HO', 'Hand off: TWR→Departure, Approach→Tower (when on the ILS), Departure→Control'],
   ['SQ 4521', 'Squawk code'],
   ['DEL', 'Delete aircraft'],
   ['.pause  .speed 2', 'Pause / simulation rate (1, 2, 4)'],
+  ['.pos twr|app|all', 'Switch controller position (the other one is flown by AI)'],
   ['.config 26 / 08', 'Change runway configuration'],
   ['.traffic low|med|high', 'Traffic density'],
   ['.routes all|sel|off', 'Route line display'],
@@ -32,6 +34,7 @@ const CMD_ALIASES = {
   S: 'S', SPD: 'S',
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
+  CL: 'CL', CTL: 'CL', CLAND: 'CL',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
 };
@@ -56,8 +59,10 @@ function parseRunway(tok) {
 class CommandProcessor {
   constructor(game) { this.game = game; }
 
-  execute(line) {
+  // opts.ai: issued by the AI controller (no ownership check, dimmed in the log).
+  execute(line, opts = {}) {
     const g = this.game;
+    this.opts = opts;
     line = line.trim();
     if (!line) return;
     if (line.startsWith('.')) return this.system(line.slice(1).trim().split(/\s+/));
@@ -74,13 +79,17 @@ class CommandProcessor {
       ac = g.findAircraft(toks[0]);
       if (!ac) return g.log(`Unknown callsign or command "${toks[0]}"`, 'err');
       toks.shift();
-      g.select(ac);
+      if (!opts.ai) g.select(ac);
       if (!toks.length) return;
     } else {
       ac = g.selected;
       if (!ac) return g.log('No aircraft selected — click one or start with its callsign', 'err');
     }
-    g.log(`${ac.cs} ${toks.join(' ').toLowerCase()}`, 'ctl');
+    if (!opts.ai && !g.userOwns(ac)) {
+      const who = POSITIONS[ac.owner];
+      return g.log(`${ac.cs} is not on your frequency — it is with ${who.name}${ac.owner !== 'CTR' ? ' (AI)' : ''}`, 'err');
+    }
+    g.log(`${opts.ai ? `[${POSITIONS[ac.owner].short} AI] ` : ''}${ac.cs} ${toks.join(' ').toLowerCase()}`, opts.ai ? 'ai' : 'ctl');
 
     const rb = [];
     const cur = { toks, i: 0, next() { return this.toks[++this.i]; }, peek() { return this.toks[this.i + 1]; } };
@@ -92,7 +101,7 @@ class CommandProcessor {
       cur.i++;
     }
     ac._pred = null; // re-predict the flight path
-    if (rb.length) ac.say(g, rb.join(', '));
+    if (rb.length) g.pilotSay(ac, rb.join(', '), !!opts.ai);
   }
 
   needAir(ac) { return ac.airborne ? null : 'unable, we are on the ground'; }
@@ -180,7 +189,7 @@ class CommandProcessor {
         }
         ac.x = ac.runway.thr.x; ac.y = ac.runway.thr.y;
         ac.hdg = ac.tgtHdg = ac.runway.heading;
-        g.checkRunwayClear(ac);
+        if (!this.opts.ai) g.checkRunwayClear(ac);
         if (cmd === 'LU') { ac.state = 'lineup'; return `lining up runway ${r}`; }
         ac.state = 'takeoff';
         ac.spd = 0;
@@ -218,10 +227,24 @@ class CommandProcessor {
         ac.goAround(g, 'going around');
         return null;
       case 'HO': {
-        if (!ac.airborne) return 'unable';
+        if (!ac.airborne) return 'unable, we are on the ground';
         if (ac.handedOff) return 'already with next sector';
-        g.handOff(ac);
-        return ac.isArr ? 'contact tower, good day' : 'contact Ravenwood Control, good day';
+        let next = null;
+        if (ac.owner === 'TWR') next = ac.isArr ? null : 'APP';
+        else if (ac.owner === 'APP') next = ac.isArr ? 'TWR' : 'CTR';
+        if (g.position === 'ALL' && !this.opts.ai) next = ac.isArr ? null : 'CTR';
+        if (!next) return ac.isArr ? 'unable, we are already with tower for landing' : 'unable';
+        if (next === 'TWR' && !ac.ils) return 'unable, we are not cleared for an approach yet';
+        g.transfer(ac, next, { ai: !!this.opts.ai });
+        return `contact ${POSITIONS[next].call} ${POSITIONS[next].freq}, good day`;
+      }
+      case 'CL': {
+        if (!ac.isArr || !ac.airborne) return 'unable';
+        if (!ac.ils) return 'unable, we are not cleared for an approach';
+        if (ac.landClr) return 'already cleared to land';
+        if (!this.opts.ai) g.checkRunwayClear(ac);
+        ac.landClr = true;
+        return `cleared to land runway ${ac.rwy}, wind ${g.windText()}`;
       }
       case 'SQ': {
         const code = arg();
@@ -278,7 +301,8 @@ class CommandProcessor {
     const { along } = ac.finalGeometry(RUNWAYS[rwy]);
     let start = 0;
     if (Geo.dist(ac, FIXES[ifx]) < Geo.dist(ac, FIXES[iaf]) && along > 8) start = 1;
-    if (along < 11 && along > 6.5) start = 2;
+    const ifAlong = RUNWAYS[rwy].phys === 'N' ? 14 : 11;
+    if (along < ifAlong && along > 6.5) start = 2;
     ac.route = [iaf, ifx, faf].slice(start);
     ac.mode = 'route';
     ac.hold = null;
@@ -303,7 +327,7 @@ class CommandProcessor {
         if (['low', 'med', 'high'].includes(a)) g.setTraffic(a); else g.log('Usage: .traffic low|med|high', 'err');
         break;
       case 'routes':
-        if (['all', 'sel', 'off'].includes(a)) { g.radar.routes = a; g.log(`Route display: ${a}`, 'sys'); }
+        if (['all', 'sel', 'off'].includes(a)) { g.radar.setRoutes(a); g.log(`Route display: ${a}`, 'sys'); }
         else g.log('Usage: .routes all|sel|off', 'err');
         break;
       case 'procs': g.radar.showProcs = !g.radar.showProcs; g.log(`Procedure overlay ${g.radar.showProcs ? 'on' : 'off'}`, 'sys'); break;
@@ -311,6 +335,11 @@ class CommandProcessor {
       case 'help': case '?': g.ui.toggleHelp(true); break;
       case 'clear': g.ui.clearLog(); break;
       case 'restart': g.restart(); break;
+      case 'pos': case 'position': {
+        const p = a.toUpperCase();
+        if (['ALL', 'TWR', 'APP'].includes(p)) g.setPosition(p); else g.log('Usage: .pos twr | app | all', 'err');
+        break;
+      }
       default: g.log(`Unknown system command ".${cmd}" — try .help`, 'err');
     }
   }

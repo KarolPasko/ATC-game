@@ -74,6 +74,11 @@ kbd { border: 1px solid var(--line); padding: 0 4px; border-radius: 3px; }
 .strip.stca { box-shadow: inset 0 0 0 1px var(--warn); }
 .strip.conflict { box-shadow: inset 0 0 0 1px var(--err); background: #3a1d22; }
 .strip .cs { font-weight: 600; }
+.strip.notmine { opacity: 0.55; }
+.own { font-size: 9px; font-weight: 600; margin-left: 6px; padding: 0 4px; border-radius: 2px; border: 1px solid var(--line); color: var(--dim); }
+.own-TWR { color: var(--gnd); border-color: #3e6b45; }
+.own-APP { color: var(--cyan); border-color: #2d6470; }
+.notmine { color: var(--dim); font-size: 11px; padding: 3px 0; }
 .strip .wt { color: var(--dim); font-weight: 400; margin-left: 6px; font-size: 10px; }
 .strip .rt { color: var(--dim); font-size: 10px; }
 .strip .al { text-align: right; }
@@ -87,6 +92,8 @@ kbd { border: 1px solid var(--line); padding: 0 4px; border-radius: 3px; }
 .msg.ctl { color: #ffffff; }
 .msg.ctl::before { content: "ATC "; color: var(--cyan); }
 .msg.sys { color: #9fb3c3; }
+.msg.ai { color: #5b6d7b; }
+.msg.ai::before { content: "· "; }
 .msg.err { color: var(--err); }
 .msg.good { color: var(--warn); }
 #cmdline { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #0c1217; border-top: 1px solid var(--line); }

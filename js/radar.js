@@ -29,13 +29,28 @@ class Radar {
     this.ctx = canvas.getContext('2d');
     this.game = game;
     this.view = { cx: 0, cy: 0, scale: 9 }; // px per nm
-    this.routes = 'all';
+    // Route lines: 'sel' (selected aircraft only, default), 'all' (every aircraft on your frequency) or 'off'.
+    this.routes = 'sel';
+    try { this.routes = localStorage.getItem('atc.routes') || 'sel'; } catch (e) { /* storage unavailable */ }
     this.showProcs = false;
     this.mouse = { x: 0, y: 0, down: false, dragged: false };
     this.hitBoxes = [];
     this.bindMouse();
     window.addEventListener('resize', () => this.resize());
     this.resize();
+  }
+
+  setRoutes(mode) {
+    this.routes = mode;
+    try { localStorage.setItem('atc.routes', mode); } catch (e) { /* storage unavailable */ }
+  }
+
+  // Tower works a close-in view; approach the whole terminal area.
+  zoomFor(pos) {
+    const range = pos === 'TWR' ? 14 : 48;
+    this.view.cx = pos === 'TWR' ? 1 : 0;
+    this.view.cy = 0;
+    this.view.scale = Math.min(this.w, this.h) / (2 * range);
   }
 
   resize() {
@@ -196,7 +211,7 @@ class Radar {
 
     const sel = g.selected;
     if (this.routes !== 'off') {
-      for (const ac of g.aircraft) if (ac !== sel && this.routes === 'all') this.drawRoute(ac, false);
+      if (this.routes === 'all') for (const ac of g.aircraft) if (ac !== sel && g.userOwns(ac)) this.drawRoute(ac, false);
       if (sel) this.drawRoute(sel, true);
     }
     for (const ac of g.aircraft) {
@@ -401,7 +416,7 @@ class Radar {
     if (ac.conflict === 2) return COLORS.conflict;
     if (ac.conflict === 1) return COLORS.stca;
     if (ac === this.game.selected) return COLORS.tagSel;
-    if (ac.handedOff) return COLORS.tagOff;
+    if (ac.handedOff || !this.game.userOwns(ac)) return COLORS.tagOff;
     return COLORS.tag;
   }
 
@@ -456,7 +471,8 @@ class Radar {
     else info = (ac.route[0] || '') + (ac.app ? ' A' + ac.rwy : ac.ils ? ' I' + ac.rwy : '');
     const spd = String(Math.round(ac.gs_kt())).padStart(3, '0');
     const lines = [
-      ac.cs + (ac.wake === 'H' ? ' H' : '') + (ac.tgtSpd ? `  S${ac.tgtSpd}` : ''),
+      ac.cs + (ac.wake === 'H' ? ' H' : '') + (ac.tgtSpd ? `  S${ac.tgtSpd}` : '') +
+        (this.game.userOwns(ac) ? (ac.isArr && ac.owner === 'TWR' && !ac.landClr && this.game.position === 'TWR' ? '  CL?' : '') : `  ${ac.owner}`),
       l2,
       `${spd} ${info}`,
     ];

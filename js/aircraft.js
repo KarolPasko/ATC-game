@@ -17,6 +17,8 @@ class Aircraft {
       cleared: false, handedOff: false,
       trail: [], trailTimer: 0, conflict: 0, prevLateral: null,
       age: 0, endOfRouteWarned: false, calledDeparture: false,
+      owner: 'APP', // controlling position: TWR | APP | CTR (handed to the next sector)
+      landClr: false, // cleared to land
     }, o);
     this.perf = TYPES[this.type];
     this.wake = this.perf.wake;
@@ -111,11 +113,6 @@ class Aircraft {
     this.adjustAltitude(dt, game);
     this.move(dt);
 
-    if (!this.isArr && !this.calledDeparture && this.alt >= 1000) {
-      this.calledDeparture = true;
-      this.say(game, `Ravenwood Departure, passing ${Math.round(this.alt / 100) * 100} ft climbing ${this.altWords(this.tgtAlt)}, ${this.sid}`);
-    }
-
     this.trailTimer += dt;
     if (this.trailTimer >= 4) {
       this.trailTimer = 0;
@@ -135,6 +132,8 @@ class Aircraft {
       const { along, lateral } = this.finalGeometry();
       this.tgtHdg = Geo.norm(this.headingFor(r.heading) - Geo.clamp(lateral * 55, -35, 35));
       this.turnDir = null;
+      // No landing clearance by 1 nm: the crew must go around.
+      if (along <= 1 && !this.landClr) return this.goAround(game, 'no landing clearance, going around');
       if (along <= 0.05) {
         if (this.alt <= 400) this.land(game);
         else this.goAround(game, 'too high, going around');
@@ -182,7 +181,7 @@ class Aircraft {
     const theta = Geo.diff(r.heading, this.track());
     const crossed = this.prevLateral !== null && Math.sign(lateral) !== Math.sign(this.prevLateral);
     this.prevLateral = lateral;
-    if (along < 0.5 || along > 30 || Math.abs(theta) > 110) return;
+    if (along < 3 || along > 30 || Math.abs(theta) > 110) return; // no intercepts inside 3 nm
     const toward = (lateral > 0 && theta < 0) || (lateral < 0 && theta > 0);
     const lead = this.turnRadius() * (1 - Math.cos(Geo.rad(theta))) + 0.15;
     if ((Math.abs(lateral) <= lead && (toward || Math.abs(lateral) < 0.15)) || crossed) {
@@ -366,7 +365,7 @@ class Aircraft {
   }
 
   goAround(game, reason = 'going around') {
-    this.est = this.gs = this.ils = this.app = false;
+    this.est = this.gs = this.ils = this.app = this.landClr = false;
     this.mode = 'heading';
     this.route = [];
     this.hold = null;
@@ -375,6 +374,7 @@ class Aircraft {
     this.tgtAlt = Math.max(this.alt, 3000);
     this.tgtSpd = null;
     this.prevLateral = null;
+    this.gaTime = game.time;
     this.say(game, `${reason}, runway heading, climbing 3000`);
     game.onGoAround(this);
   }
@@ -387,7 +387,7 @@ class Aircraft {
     const g = Object.assign(Object.create(Aircraft.prototype), this, {
       route: this.route.slice(),
       hold: this.hold ? { ...this.hold, announced: true } : null,
-      trail: [], endOfRouteWarned: true, calledDeparture: true,
+      trail: [], endOfRouteWarned: true, calledDeparture: true, landClr: true,
     });
     if (g.state === 'ground' || g.state === 'lineup') {
       Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.thr.x, y: g.runway.thr.y, hdg: g.runway.heading });

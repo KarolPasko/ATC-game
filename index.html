@@ -18,6 +18,11 @@
     <div class="item"><label>ATIS</label><span id="atis"></span></div>
     <div class="spacer"></div>
     <div class="controls">
+      <select id="sel-pos" title="Your controller position (the other is flown by AI)">
+        <option value="ALL">Position: Combined</option>
+        <option value="TWR">Position: Tower</option>
+        <option value="APP">Position: Approach</option>
+      </select>
       <select id="sel-config" title="Runway configuration">
         <option value="26">Config 26</option>
         <option value="08">Config 08</option>
@@ -28,8 +33,8 @@
         <option value="high">Traffic: high</option>
       </select>
       <select id="sel-routes" title="Route lines">
-        <option value="all">Routes: all</option>
-        <option value="sel">Routes: selected</option>
+        <option value="sel">Routes: selected only</option>
+        <option value="all">Routes: all mine</option>
         <option value="off">Routes: off</option>
       </select>
       <label class="chk"><input type="checkbox" id="chk-procs"> Procs</label>
@@ -88,12 +93,26 @@
         teardrop entries, 1-minute legs up to FL140 (1.5 min above), at holding speed (230 kt). Speed is limited to 250 kt below FL100.
         Transition altitude is 6000 ft; pilots set QNH when descending below it. Published holds are marked with a dot under
         the fix; hover a fix with an aircraft selected, or tick <i>Procs</i>, to see them.</p>
+      <h2>Positions</h2>
+      <p>Pick your position in the top bar (or <code>.pos twr</code> / <code>.pos app</code> / <code>.pos all</code>). The other
+        position is worked by an AI controller, and you can switch at any time.</p>
+      <table>
+        <tr><td><b>Tower</b></td><td>Departures: clearance (<code>caf</code>), <code>lu</code>, <code>cto</code>, then transfer to
+          Departure (<code>ho</code>) passing about 1500–5000 ft. Arrivals: Approach transfers them to you on the ILS. Give them
+          <code>cl</code> (cleared to land), or they go around at 1 nm. Keep the runway clear.</td></tr>
+        <tr><td><b>Approach</b></td><td>Arrivals from the entry fix: descend, sequence, vector or clear the approach, then transfer
+          to Tower (<code>ho</code>) once on the ILS. Departures check in after Tower transfers them: climb them and hand them to
+          Control (<code>ho</code>) above FL100, 20 nm out.</td></tr>
+        <tr><td><b>Combined</b></td><td>You do both; landing clearances and frequency changes between Tower and Approach are automatic.</td></tr>
+      </table>
+      <p>Aircraft on the AI's frequency have grey tags and strips. Their radio calls appear dimmed in the log. You only lose
+        points for separation on aircraft that are on your frequency.</p>
       <p>Type a callsign (or just its digits) followed by commands, or select an aircraft and type commands only.
         Several commands can go on one line: <code>BAW123 tl 180 d 4000 s 220</code>.</p>
       <h2>Commands</h2>
       <table id="help-table"></table>
       <h2>Scoring</h2>
-      <p>Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 · separation loss −50 · wake spacing −30 ·
+      <p>Landing +100 · handoff to Control +100 (early +50/+20) · Tower→Departure +30 · Approach→Tower +20 · go-around −10 · runway not clear −50 · separation loss −50 · wake spacing −30 ·
         departure leaving without handoff −50 · arrival lost −100.</p>
       <p class="tip">Tip: arrivals descend on their own only after <code>app RWY</code>. With <code>i RWY</code> you must vector
         them onto the localizer (≈30° intercept) and descend them to 3000–4000 ft first — the glideslope is captured from below.</p>
@@ -104,6 +123,7 @@
   <script src="js/data.js"></script>
   <script src="js/aircraft.js"></script>
   <script src="js/commands.js"></script>
+  <script src="js/ai.js"></script>
   <script src="js/radar.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/game.js"></script>

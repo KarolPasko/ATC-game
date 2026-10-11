@@ -67,23 +67,23 @@ addFix('ETRAX', { x: 13, y: 27 }, 'enroute');
 addFix('SIPOR', { x: -11, y: -16 }, 'enroute');
 addFix('EBRIK', { x: 16, y: -20 }, 'enroute');
 addFix('ARKOS', { x: -20, y: 30 }, 'enroute');
-addFix('BELTA', { x: 20, y: 38 }, 'enroute');
-addFix('CORVU', { x: 38, y: -15 }, 'enroute');
-addFix('DAMEK', { x: -18, y: -35 }, 'enroute');
-addFix('ELNAR', { x: -36, y: -22 }, 'enroute');
-addFix('FIRZO', { x: -36, y: 26 }, 'enroute');
+addFix('BELTA', { x: 20, y: 38 }, 'exit');
+addFix('CORVU', { x: 38, y: -15 }, 'entry');
+addFix('DAMEK', { x: -18, y: -35 }, 'exit');
+addFix('ELNAR', { x: -36, y: -22 }, 'exit');
+addFix('FIRZO', { x: -36, y: 26 }, 'entry');
 addFix('GOLVA', { x: 12, y: 15 }, 'enroute');
 addFix('HEXOR', { x: 25, y: -13 }, 'enroute');
 addFix('IRVAN', { x: -9, y: -32 }, 'enroute');
-addFix('JUPAL', { x: 36, y: -5 }, 'enroute');
+addFix('JUPAL', { x: 36, y: -5 }, 'exit');
 addFix('KUTRA', { x: -22, y: -10 }, 'enroute');
 addFix('LOVIS', { x: -19, y: 6 }, 'enroute');
 addFix('MOSKA', { x: 6, y: -11 }, 'enroute');
 addFix('NURPA', { x: 23, y: 19 }, 'enroute');
 addFix('OSTEP', { x: -4, y: 35 }, 'enroute');
 addFix('PRAVO', { x: 16, y: -34 }, 'enroute');
-addFix('RUSKO', { x: -28, y: -38 }, 'enroute');
-addFix('TELBA', { x: 35, y: 28 }, 'enroute');
+addFix('RUSKO', { x: -28, y: -38 }, 'entry');
+addFix('TELBA', { x: 35, y: 28 }, 'entry');
 addFix('VEXAN', { x: -33, y: 8 }, 'enroute');
 addFix('YAMIK', { x: 31, y: 9 }, 'enroute');
 addFix('ZEPRA', { x: -4, y: 17 }, 'enroute');
@@ -100,17 +100,22 @@ const APPROACHES = {
   '08R': ['ZUBIN', 'HALOR', 'ESKIN'],
 };
 const IAF_SIDE = { '26R': 8, '26L': -8, '08L': -8, '08R': 8 }; // outer side of each runway
+// North runways (08L/26R) fly their intermediate approach 1000 ft higher, so arrivals for the
+// two parallels have vertical separation until established on their localizers.
 for (const [rwy, [iaf, ifx, faf]] of Object.entries(APPROACHES)) {
-  addFix(iaf, approachPoint(rwy, 15, IAF_SIDE[rwy]), 'iaf', 4000);
-  addFix(ifx, approachPoint(rwy, 11, 0), 'if', 3000);
+  const north = RUNWAYS[rwy].phys === 'N';
+  addFix(iaf, approachPoint(rwy, north ? 17 : 15, IAF_SIDE[rwy]), 'iaf', north ? 5000 : 4000);
+  addFix(ifx, approachPoint(rwy, north ? 14 : 11, 0), 'if', north ? 4000 : 3000);
   addFix(faf, approachPoint(rwy, 6.3, 0), 'faf', 2000);
 }
 
-// SID first fixes: 4 nm beyond the departure end
+// SID first fixes: 4 nm beyond the departure end, splaying 15° away from the parallel runway
+// so simultaneous departures diverge immediately.
 const SID_FIRST = { '26R': 'ROKEL', '26L': 'SALMA', '08L': 'KORAN', '08R': 'LIPEX' };
 for (const [rwy, name] of Object.entries(SID_FIRST)) {
   const r = RUNWAYS[rwy];
-  addFix(name, Geo.offset(r.opp, r.heading, 4), 'sid');
+  const awayFromParallel = (r.phys === 'N') === (r.heading === 260) ? 15 : -15;
+  addFix(name, Geo.offset(r.opp, r.heading + awayFromParallel, 4), 'sid');
 }
 
 // ---- Procedures per runway configuration ----
@@ -124,12 +129,20 @@ const PROCS = {
       { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'HEXOR', 'SUREK'] },
       { name: 'DEXOR1L', rwy: '26L', fixes: ['DEXOR', 'NEKOS', 'SUREK'] },
       { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'ULMAR', 'KUTRA', 'FOXEN', 'SUREK'] },
+      { name: 'TELBA1R', rwy: '26R', fixes: ['TELBA', 'OKR', 'NURPA', 'NORAX'] },
+      { name: 'FIRZO1R', rwy: '26R', fixes: ['FIRZO', 'ARKOS', 'ZEPRA', 'GOLVA', 'NORAX'] },
+      { name: 'RUSKO1L', rwy: '26L', fixes: ['RUSKO', 'IRVAN', 'MOSKA', 'SUREK'] },
+      { name: 'CORVU1L', rwy: '26L', fixes: ['CORVU', 'HEXOR', 'SUREK'] },
     ],
     sids: [
       { name: 'NOVAL2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'NOVAL'] },
       { name: 'ESTOR2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'ETRAX', 'ESTOR'] },
       { name: 'WOLFE2L', rwy: '26L', fixes: ['SALMA', 'LOVIS', 'WOLFE'] },
       { name: 'SUDAN2L', rwy: '26L', fixes: ['SALMA', 'SIPOR', 'SUDAN'] },
+      { name: 'BELTA2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'ZEPRA', 'BELTA'] },
+      { name: 'ELNAR2L', rwy: '26L', fixes: ['SALMA', 'KUTRA', 'ELNAR'] },
+      { name: 'DAMEK2L', rwy: '26L', fixes: ['SALMA', 'SIPOR', 'DAMEK'] },
+      { name: 'JUPAL2L', rwy: '26L', fixes: ['SALMA', 'SIPOR', 'EBRIK', 'JUPAL'] },
     ],
   },
   '08': {
@@ -141,12 +154,20 @@ const PROCS = {
       { name: 'KOPAS1E', rwy: '08R', fixes: ['KOPAS', 'NEKOS', 'ZUBIN'] },
       { name: 'DEXOR1E', rwy: '08R', fixes: ['DEXOR', 'NEKOS', 'ZUBIN'] },
       { name: 'VAREN1E', rwy: '08R', fixes: ['VAREN', 'ZUBIN'] },
+      { name: 'TELBA1D', rwy: '08L', fixes: ['TELBA', 'OKR', 'ETRAX', 'ZEPRA', 'KELVO'] },
+      { name: 'FIRZO1D', rwy: '08L', fixes: ['FIRZO', 'KELVO'] },
+      { name: 'RUSKO1E', rwy: '08R', fixes: ['RUSKO', 'DXT', 'ZUBIN'] },
+      { name: 'CORVU1E', rwy: '08R', fixes: ['CORVU', 'HEXOR', 'MOSKA', 'ZUBIN'] },
     ],
     sids: [
       { name: 'NOVAL3L', rwy: '08L', fixes: ['KORAN', 'ETRAX', 'NOVAL'] },
       { name: 'ESTOR3L', rwy: '08L', fixes: ['KORAN', 'ESTOR'] },
       { name: 'SUDAN3R', rwy: '08R', fixes: ['LIPEX', 'EBRIK', 'SUDAN'] },
       { name: 'WOLFE3R', rwy: '08R', fixes: ['LIPEX', 'SIPOR', 'WOLFE'] },
+      { name: 'BELTA3L', rwy: '08L', fixes: ['KORAN', 'GOLVA', 'BELTA'] },
+      { name: 'JUPAL3L', rwy: '08L', fixes: ['KORAN', 'JUPAL'] },
+      { name: 'ELNAR3R', rwy: '08R', fixes: ['LIPEX', 'SIPOR', 'ELNAR'] },
+      { name: 'DAMEK3R', rwy: '08R', fixes: ['LIPEX', 'MOSKA', 'IRVAN', 'DAMEK'] },
     ],
   },
 };
@@ -163,9 +184,9 @@ const HOLDS = {
   GIBRA: { inbound: 260, turn: 'R', minAlt: 6000 },
   NEKOS: { inbound: 5, turn: 'R', minAlt: 6000 },
   ULMAR: { inbound: 90, turn: 'L', minAlt: 6000 },
-  NORAX: { inbound: 200, turn: 'R', minAlt: 4000 },
+  NORAX: { inbound: 200, turn: 'R', minAlt: 5000 },
   SUREK: { inbound: 300, turn: 'L', minAlt: 4000 },
-  KELVO: { inbound: 125, turn: 'L', minAlt: 4000 },
+  KELVO: { inbound: 125, turn: 'L', minAlt: 5000 },
   ZUBIN: { inbound: 35, turn: 'R', minAlt: 4000 },
   RVW: { inbound: 80, turn: 'R', minAlt: 4000 },
   OKR: { inbound: 225, turn: 'R', minAlt: 7000 },
@@ -214,4 +235,5 @@ const OUTSTATIONS = {
 const FIX_DIRECTION = {
   BOGNA: 'N', MIRLO: 'N', TIMBA: 'N', LAMSO: 'E', KOPAS: 'S', DEXOR: 'S', VAREN: 'W',
   NOVAL: 'N', ESTOR: 'E', SUDAN: 'S', WOLFE: 'W',
+  TELBA: 'E', FIRZO: 'W', RUSKO: 'S', CORVU: 'E', BELTA: 'N', ELNAR: 'W', DAMEK: 'S', JUPAL: 'E',
 };

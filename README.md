@@ -13,6 +13,20 @@ python3 -m http.server 8000   # then open http://localhost:8000
 
 ## How to play
 
+### Positions
+
+Pick your position in the top bar (or type `.pos twr`, `.pos app`, `.pos all`). An AI controller works the other position,
+and you can switch at any time.
+
+| Position | You handle | The AI handles |
+| --- | --- | --- |
+| **Tower** (DEL/GND/TWR) | Clearances (`caf`), line-up and take-off, landing clearances (`cl`), transfer of departures to Departure (`ho`) | Arrivals from entry to the ILS, then it transfers them to you; departures after you transfer them |
+| **Approach** (APP/DEP) | Arrivals from entry to the ILS, then transfer to Tower (`ho`); departures from take-off up to Control (`ho`) | Clearances, take-offs, landing clearances |
+| **Combined** | Everything; Tower↔Approach transfers and landing clearances are automatic | — |
+
+Arrivals without a landing clearance go around at 1 nm. Aircraft on the AI's frequency have grey tags and strips, and their
+radio calls are dimmed in the log. You only lose points for separation involving your own aircraft.
+
 - **Arrivals** enter on STARs. Their route into the airport is drawn in **magenta**.
   Descend them and clear them for an approach.
 - **Departures** wait at the holding point. Give them their clearance (`caf`), clear them for take-off (`cto`),
@@ -49,15 +63,19 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `hold [fix] [inbound] [L\|R] [1.5M]` | Hold as published, or with your own inbound course, turns and leg time |
 | `res` | Resume own navigation on the route |
 | `ga` | Go around |
-| `ho` | Hand off to the next sector |
+| `cl` | Cleared to land (tower) |
+| `ho` | Transfer: Tower → Departure, Approach → Tower (once on the ILS), Departure → Control |
 | `sq 4521` | Squawk code |
 | `del` | Delete an aircraft |
 
-System commands: `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
+System commands: `.pos twr|app|all`, `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
 `.procs`, `.voice`, `.help`, `.restart`.
 
 ## Realism
 
+- **Route lines** show only for the selected aircraft by default (top bar: *Routes: selected only / all mine / off*).
+- **Procedures**: 11 STARs and 8 SIDs per runway direction. The north runway's approach is 1000 ft higher than the south
+  runway's, so arrivals are vertically separated until established. Departure routes splay 15° away from the parallel runway.
 - **Predicted flight path**: the line ahead of each aircraft comes from simulating it forward, so it shows the real
   curved turns, fly-by waypoints, localizer intercepts and holding patterns. A dashed line means the aircraft is on a heading.
 - **Wind** (shown in the ATIS) drifts aircraft that are flying a heading. On routes, in holds and on the localizer, pilots correct for it.
@@ -70,7 +88,7 @@ System commands: `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|hi
 
 ## Scoring
 
-Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 ·
+Landing +100 · handoff to Control +100 (early +50/+20) · Tower→Departure +30 · Approach→Tower +20 · go-around −10 · runway not clear −50 ·
 separation loss −50 · wake spacing −30 · departure leaving without a handoff −50 · arrival lost −100.
 
 ## Code layout
@@ -81,6 +99,7 @@ separation loss −50 · wake spacing −30 · departure leaving without a hando
 | `js/data.js` | Runways, waypoints, STARs/SIDs/approaches, aircraft performance |
 | `js/aircraft.js` | Flight model, route following, localizer and glideslope capture, holds |
 | `js/commands.js` | Command line parser |
+| `js/ai.js` | AI controller for the position you are not working |
 | `js/game.js` | Simulation loop, traffic spawning, separation checks, scoring |
 | `js/radar.js` | Radar scope drawing and mouse interaction |
 | `js/ui.js` | Flight strips, selected aircraft panel, message log |

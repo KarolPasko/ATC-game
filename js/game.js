@@ -10,6 +10,8 @@ const rnd = (a) => a[Math.floor(Math.random() * a.length)];
 class Game {
   constructor(canvas) {
     this.commands = new CommandProcessor(this);
+    this.ai = new AIController(this);
+    this.position = 'ALL';
     this.radar = new Radar(canvas, this);
     this.ui = new UI(this);
     this.voice = false;
@@ -30,6 +32,7 @@ class Game {
     this.score = 0;
     this.stats = { landed: 0, departed: 0, losses: 0, goArounds: 0 };
     this.conflictPairs = new Set();
+    this.ai.lastTakeoff = {};
     this.nextArr = 5;
     this.nextDep = 15;
     this.atis = 'K';
@@ -70,6 +73,7 @@ class Game {
     WIND.dir = this.windBase.dir + Math.sin(this.time / 300) * 10;
     WIND.spd = Math.max(0, this.windBase.spd + Math.sin(this.time / 170) * 3);
     for (const ac of this.aircraft) ac.update(dt, this);
+    this.ai.update(dt);
     this.layoutGround();
     this.checkBoundaries();
     this.sepTimer = (this.sepTimer || 0) + dt;
@@ -124,7 +128,7 @@ class Game {
       x: entry.x, y: entry.y, alt, tgtAlt: alt, spd: 280,
       rwy: star.rwy, star: star.name, route,
       orig: rnd(OUTSTATIONS[FIX_DIRECTION[star.fixes[0]]]), dest: AIRPORT.icao,
-      squawk: this.newSquawk(), cleared: true,
+      squawk: this.newSquawk(), cleared: true, owner: 'APP',
     });
     ac.hdg = ac.tgtHdg = Geo.bearing(entry, FIXES[route[0]]);
     this.aircraft.push(ac);
@@ -143,7 +147,8 @@ class Game {
       x: r.thr.x, y: r.thr.y, alt: 0, tgtAlt: 0, spd: 0, hdg: r.heading, tgtHdg: r.heading,
       state: 'ground', rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(),
       orig: AIRPORT.icao, dest: rnd(OUTSTATIONS[FIX_DIRECTION[sid.fixes[sid.fixes.length - 1]]]),
-      squawk: this.newSquawk(), cleared: false, spawnTime: this.time,
+      squawk: this.newSquawk(), cleared: false, spawnTime: this.time, owner: 'TWR',
+      cruise: rnd([240, 280, 320, 360]),
     });
     this.aircraft.push(ac);
     ac.say(this, `Ravenwood Tower, holding point runway ${sid.rwy}, IFR to ${ac.dest}, request clearance`);
@@ -176,21 +181,72 @@ class Game {
   }
 
   onGoAround(ac) {
-    this.stats.goArounds++;
-    this.addScore(-10, `${ac.cs} go-around`);
+    if (this.userOwns(ac)) {
+      this.stats.goArounds++;
+      this.addScore(-10, `${ac.cs} go-around`);
+    }
+    // Tower hands a missed approach straight back to Approach for re-sequencing.
+    if (ac.owner === 'TWR') {
+      ac.owner = 'APP';
+      if (this.position !== 'ALL') this.log(`Ravenwood Tower: ${ac.cs} going around, transferred back to Approach`, 'sys');
+    }
   }
 
-  handOff(ac) {
+  // ---------- controller positions ----------
+  userOwns(ac) {
+    if (this.position === 'ALL') return ac.owner !== 'CTR';
+    return ac.owner === this.position;
+  }
+
+  // Move an aircraft to another controller's frequency, with scoring and the pilot's first call.
+  transfer(ac, to, { ai = false, silent = false } = {}) {
+    const from = ac.owner;
+    ac.owner = to;
+    ac._pred = null;
+    if (to === 'CTR') return this.handOff(ac, ai || silent);
+    const scored = !ai && !silent;
+    const d = Math.hypot(ac.x, ac.y);
+    if (from === 'TWR' && to === 'APP' && !ac.isArr) {
+      if (scored) {
+        this.stats.departed++;
+        if (ac.alt <= 5000 && d < 12) this.addScore(30, `${ac.cs} transferred to Departure`);
+        else this.addScore(10, `${ac.cs} transferred to Departure late`);
+      }
+      this.pilotSay(ac, `Ravenwood Departure, passing ${Math.round(ac.alt / 100) * 100} ft climbing ${ac.altWords(ac.tgtAlt)}, ${ac.sid}`);
+    }
+    if (from === 'APP' && to === 'TWR' && ac.isArr) {
+      if (scored) this.addScore(ac.est ? 20 : 10, `${ac.cs} transferred to Tower${ac.est ? '' : ' (not yet established)'}`);
+      if (!silent) this.pilotSay(ac, `Ravenwood Tower, ILS ${ac.rwy}${ac.est ? ' established' : ''}, ${ac.finalGeometry().along.toFixed(0)} miles`);
+    }
+  }
+
+  setPosition(p) {
+    if (p === this.position) return;
+    this.position = p;
+    const desc = {
+      ALL: 'You control everything: approach, departure and tower.',
+      TWR: 'You are Tower: clearances (caf), line-up, take-off, landing clearances (cl), and transfer departures to Departure (ho). AI works Approach.',
+      APP: 'You are Approach/Departure: arrivals to the ILS then transfer to Tower (ho), departures after take-off up to Control (ho). AI works Tower.',
+    }[p];
+    this.log(`Position: ${POSITIONS[p].name}. ${desc}`, 'sys');
+    this.radar.zoomFor(p);
+    if (this.selected && !this.userOwns(this.selected)) this.select(null);
+    this.ui.update();
+  }
+
+  handOff(ac, ai = false) {
     ac.handedOff = true;
+    ac.owner = 'CTR';
     if (ac.isArr) return;
+    ac.tgtAlt = Math.max(ac.tgtAlt, 30000);
+    ac.tgtSpd = null;
+    if (ac.mode !== 'route' && ac.route.length) { ac.mode = 'route'; ac.hold = null; }
+    if (ai) return;
     const d = Math.hypot(ac.x, ac.y);
     this.stats.departed++;
     if (d >= 20 && ac.alt >= 10000) this.addScore(100, `${ac.cs} handed off`);
     else if (ac.alt >= SID_TOP) this.addScore(50, `${ac.cs} handed off (low/early — climb them higher first)`);
     else this.addScore(20, `${ac.cs} handed off very early`);
-    ac.tgtAlt = Math.max(ac.tgtAlt, 30000);
-    ac.tgtSpd = null;
-    if (ac.mode !== 'route' && ac.route.length) { ac.mode = 'route'; ac.hold = null; }
   }
 
   checkRunwayClear(ac) {
@@ -206,7 +262,7 @@ class Game {
       if (ac.state !== 'air') continue;
       if (Math.hypot(ac.x, ac.y) > AIRPORT.radarRange) {
         ac.state = 'gone';
-        if (!ac.isArr && ac.handedOff) continue;
+        if ((!ac.isArr && ac.handedOff) || !this.userOwns(ac)) continue;
         if (ac.isArr) this.addScore(-100, `${ac.cs} left your airspace — arrival lost`);
         else { this.stats.departed++; this.addScore(-50, `${ac.cs} left your airspace without a handoff`); }
       }
@@ -226,7 +282,7 @@ class Game {
           a.conflict = b.conflict = 2;
           const key = [a.cs, b.cs].sort().join('|');
           now.add(key);
-          if (!this.conflictPairs.has(key)) {
+          if (!this.conflictPairs.has(key) && this.blame(a, b)) {
             this.stats.losses++;
             this.addScore(-50, `Separation lost: ${a.cs} / ${b.cs} (${h.toFixed(1)} nm, ${Math.round(v)} ft)`);
           }
@@ -254,7 +310,7 @@ class Game {
         b.conflict = Math.max(b.conflict, 1);
         const key = `wake|${a.cs}|${b.cs}`;
         now.add(key);
-        if (!this.conflictPairs.has(key)) {
+        if (!this.conflictPairs.has(key) && this.userOwns(b)) {
           this.stats.losses++;
           this.addScore(-30, `Wake turbulence: ${b.cs} is ${d.toFixed(1)} nm behind heavy ${a.cs} (need ${need} nm)`);
         }
@@ -262,8 +318,22 @@ class Game {
     }
   }
 
+  // Does a separation loss count against the player? Only if one aircraft is theirs, and not
+  // when it is an in-trail arrival pair whose trailing aircraft is still with the AI.
+  blame(a, b) {
+    if (!this.userOwns(a) && !this.userOwns(b)) return false;
+    if (a.isArr && b.isArr && a.rwy === b.rwy) {
+      const trail = this.ai.remaining(a) > this.ai.remaining(b) ? a : b;
+      if (!this.userOwns(trail)) return false;
+    }
+    return true;
+  }
+
   exempt(a, b) {
     if (a.est && b.est && a.rwy !== b.rwy) return true; // independent parallel approaches
+    // Departures from the parallel runways on tracks diverging by 15° or more.
+    if (!a.isArr && !b.isArr && a.rwy !== b.rwy && a.alt < 6000 && b.alt < 6000 &&
+        Math.hypot(a.x, a.y) < 10 && Math.abs(Geo.diff(a.track(), b.track())) >= 15) return true;
     const near = (x) => Math.hypot(x.x, x.y) < 6 && x.alt < 2500;
     return near(a) && near(b) && (a.isArr !== b.isArr || a.rwy !== b.rwy);
   }
@@ -305,9 +375,10 @@ class Game {
 
   log(text, cls = 'sys') { this.ui.log(text, cls, this.clock()); }
 
-  pilotSay(ac, text) {
-    this.log(`${ac.cs}: ${text}`, 'pilot');
-    if (this.voice && window.speechSynthesis) {
+  // Calls on a frequency the player isn't working (AI-controlled) are shown dimmed and not spoken.
+  pilotSay(ac, text, ai = !this.userOwns(ac)) {
+    this.log(`${ac.cs}: ${text}`, ai ? 'ai' : 'pilot');
+    if (!ai && this.voice && window.speechSynthesis) {
       const al = AIRLINES.find((a) => ac.cs.startsWith(a.icao));
       const spoken = (al ? al.name + ' ' + ac.cs.slice(3).split('').join(' ') : ac.cs) + ', ' + text.replace(/\b(\d{3,4})\b/g, (m) => m.split('').join(' '));
       const u = new SpeechSynthesisUtterance(spoken);

@@ -52,7 +52,8 @@ class UI {
     $('help').addEventListener('click', (e) => { if (e.target.id === 'help') this.toggleHelp(false); });
     $('sel-config').onchange = (e) => g.setConfig(e.target.value);
     $('sel-traffic').onchange = (e) => g.setTraffic(e.target.value);
-    $('sel-routes').onchange = (e) => { g.radar.routes = e.target.value; };
+    $('sel-routes').onchange = (e) => g.radar.setRoutes(e.target.value);
+    $('sel-pos').onchange = (e) => g.setPosition(e.target.value);
     $('chk-procs').onchange = (e) => { g.radar.showProcs = e.target.checked; };
     $('chk-voice').onchange = (e) => { g.voice = e.target.checked; };
     // Strip and quick-button clicks (delegated).
@@ -97,6 +98,7 @@ class UI {
     $('btn-pause').classList.toggle('on', g.paused);
     for (const r of [1, 2, 4]) $(`btn-x${r}`).classList.toggle('on', g.rate === r);
     $('sel-config').value = g.config;
+    $('sel-pos').value = g.position;
     $('sel-traffic').value = g.traffic;
     $('sel-routes').value = g.radar.routes;
     $('chk-procs').checked = g.radar.showProcs;
@@ -114,6 +116,7 @@ class UI {
     const conf = ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
     if (ac.state === 'ground') status = ac.cleared ? 'CLRD' : 'REQ CLR';
+    else if (ac.isArr && ac.owner === 'TWR' && ac.airborne && !ac.landClr && g.position !== 'ALL') status = 'REQ LDG CLR';
     else if (ac.state === 'lineup') status = 'LINED UP';
     else if (ac.state === 'takeoff') status = 'T/O ROLL';
     else if (ac.state === 'landed') status = 'LANDED';
@@ -123,8 +126,9 @@ class UI {
     else if (ac.mode === 'heading') status = `H${Geo.fmtHdg(ac.tgtHdg)}`;
     else status = ac.route[0] || '';
     const proc = ac.isArr ? ac.star : ac.sid;
-    return `<div class="strip ${ac.isArr ? 'arr' : 'dep'}${sel}${conf}" data-cs="${esc(ac.cs)}">
-      <div class="cs">${esc(ac.cs)}<span class="wt">${esc(ac.type)}/${ac.wake}</span></div>
+    const mine = g.userOwns(ac) ? '' : ' notmine';
+    return `<div class="strip ${ac.isArr ? 'arr' : 'dep'}${sel}${conf}${mine}" data-cs="${esc(ac.cs)}">
+      <div class="cs">${esc(ac.cs)}<span class="wt">${esc(ac.type)}/${ac.wake}</span><span class="own own-${ac.owner}">${ac.owner}</span></div>
       <div class="rt">${esc(ac.isArr ? ac.orig : ac.dest)} · ${esc(proc)} · ${esc(ac.rwy)}</div>
       <div class="al">${esc(alt)}</div>
       <div class="st">${esc(status)}</div>
@@ -153,11 +157,22 @@ class UI {
       const btn = (label, cmd) => `<button data-cmd="${esc(cmd)}">${esc(label)}</button>`;
       if (ac.state === 'ground' || ac.state === 'lineup') {
         quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
+      } else if (!this.game.userOwns(ac)) {
+        quick = `<span class="notmine">With ${esc(POSITIONS[ac.owner].name)}${ac.owner !== 'CTR' ? ' (AI)' : ''}</span>`;
       } else if (ac.state === 'air') {
         quick = btn('Heading…', 'h ') + btn('Alt…', 'a ') + btn('Speed…', 's ') + btn('Direct…', 'dct ');
         quick += btn('Hold…', 'hold ');
-        if (ac.isArr) quick += btn(`ILS ${ac.rwy}`, `i ${ac.rwy}`) + btn(`APP ${ac.rwy}`, `app ${ac.rwy}`) + btn('Go around', 'ga');
-        else quick += btn('FL240', 'a FL240') + (!ac.handedOff ? btn('Hand off', 'ho') : '');
+        const pos = this.game.position;
+        if (ac.isArr) {
+          if (ac.owner === 'TWR' && !ac.landClr) quick += btn('Cleared to land', 'cl');
+          if (ac.owner === 'APP') quick += btn(`ILS ${ac.rwy}`, `i ${ac.rwy}`) + btn(`APP ${ac.rwy}`, `app ${ac.rwy}`);
+          if (ac.owner === 'APP' && pos === 'APP' && ac.ils) quick += btn('Contact Tower', 'ho');
+          quick += btn('Go around', 'ga');
+        } else if (ac.owner === 'TWR' && pos === 'TWR') {
+          quick += btn('Contact Departure', 'ho');
+        } else {
+          quick += btn('FL240', 'a FL240') + (!ac.handedOff ? btn('Contact Control', 'ho') : '');
+        }
         if (ac.mode !== 'route' && ac.route.length && !ac.est) quick += btn('Resume', 'res');
       }
       html = `
