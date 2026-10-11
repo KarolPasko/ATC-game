@@ -12,7 +12,7 @@ class AIController {
   constructor(game) {
     this.game = game;
     this.timer = 0;
-    this.lastTakeoff = {}; // physical runway -> sim time
+    this.lastTakeoff = {}; // physical runway -> { t: sim time, heavy }
   }
 
   // Issue a command as the AI controller (readbacks are shown dimmed).
@@ -27,6 +27,7 @@ class AIController {
     for (const ac of g.aircraft) {
       if (ac.state === 'gone' || ac.owner === 'CTR') continue;
       if (pos === 'ALL') this.combinedTransfers(ac);
+      if (g.autoTaxi && ac.owner === 'TWR' && g.userOwns(ac)) this.groundMovement(ac);
       if (pos !== 'TWR' && pos !== 'ALL' && ac.owner === 'TWR') this.tower(ac);
       if (pos !== 'APP' && pos !== 'ALL' && ac.owner === 'APP') this.approach(ac);
     }
@@ -45,28 +46,41 @@ class AIController {
     }
   }
 
+  // Taxi instructions: departures to their holding point once cleared, arrivals to their stand once vacated.
+  groundMovement(ac) {
+    if (ac.state === 'stand' && ac.cleared && !ac.isArr) this.cmd(ac, 'taxi');
+    else if (ac.state === 'taxi' && !ac.taxiPath.length && !ac.holdPos) {
+      if (ac.isArr && ac.stand) this.cmd(ac, 'taxi');
+      else if (!ac.isArr) this.cmd(ac, 'taxi');
+    }
+  }
+
   // ---------- AI tower ----------
   tower(ac) {
     const g = this.game;
+    if (ac.state === 'stand' && !ac.cleared) {
+      if (g.time - ac.spawnTime > 20) this.cmd(ac, 'caf');
+      return;
+    }
+    if (['stand', 'taxi'].includes(ac.state)) { this.groundMovement(ac); return; }
     if (ac.state === 'ground') {
-      if (!ac.cleared && g.time - ac.spawnTime > 20) this.cmd(ac, 'caf');
-      else if (ac.cleared && this.runwayFree(ac)) {
+      if (ac.cleared && this.runwayFree(ac)) {
         this.cmd(ac, 'cto');
-        this.lastTakeoff[ac.runway.phys] = g.time;
+        this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' };
       }
       return;
     }
     if (ac.state === 'lineup' && this.runwayFree(ac, true)) {
       this.cmd(ac, 'cto');
-      this.lastTakeoff[ac.runway.phys] = g.time;
+      this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' };
       return;
     }
     if (!ac.isArr && ac.airborne && ac.alt >= 1500) { this.cmd(ac, 'ho'); return; }
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 8) this.cmd(ac, 'cl');
   }
 
-  // Departure may go if it is first in the queue, the runway is empty, nothing is on a
-  // close final for the same runway, and the previous departure left at least 90 s ago.
+  // Departure may go if it is first in the queue, the runway is empty, nothing is within
+  // 4 nm of landing on the same runway, and departure spacing has passed.
   runwayFree(ac, linedUp = false) {
     const g = this.game;
     const phys = ac.runway.phys;
@@ -74,10 +88,12 @@ class AIController {
       const queue = g.aircraft.filter((o) => o.state === 'ground' && o.runway.phys === phys && o.cleared);
       if (queue[0] !== ac) return false;
     }
-    if (g.time - (this.lastTakeoff[phys] ?? -999) < 90) return false;
+    // 1 minute between departures, 2 minutes behind a heavy (wake turbulence).
+    const last = this.lastTakeoff[phys];
+    if (last && g.time - last.t < (last.heavy ? 120 : 60)) return false;
     return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
       ['lineup', 'takeoff', 'landed'].includes(o.state) ||
-      (o.isArr && o.airborne && o.ils && o.finalGeometry().along < 5 && o.finalGeometry().along > -1) ||
+      (o.isArr && o.airborne && o.ils && o.finalGeometry().along < 4 && o.finalGeometry().along > -1) ||
       (!o.isArr && o.airborne && o.alt < 1000)));
   }
 

@@ -12,6 +12,8 @@ class Game {
     this.commands = new CommandProcessor(this);
     this.ai = new AIController(this);
     this.position = 'ALL';
+    this.viewMode = 'radar'; // radar | ground
+    this.autoTaxi = true; // AI ground handles taxiing for the player's aircraft
     this.radar = new Radar(canvas, this);
     this.ui = new UI(this);
     this.voice = false;
@@ -74,7 +76,6 @@ class Game {
     WIND.spd = Math.max(0, this.windBase.spd + Math.sin(this.time / 170) * 3);
     for (const ac of this.aircraft) ac.update(dt, this);
     this.ai.update(dt);
-    this.layoutGround();
     this.checkBoundaries();
     this.sepTimer = (this.sepTimer || 0) + dt;
     if (this.sepTimer >= 1) { this.sepTimer = 0; this.checkSeparation(); }
@@ -135,38 +136,54 @@ class Game {
     ac.say(this, `Ravenwood Approach, good day, ${ac.altText().startsWith('F') ? 'flight level ' + Math.round(alt / 100) : alt + ' ft'}, ${star.name} arrival, expecting runway ${star.rwy}`);
   }
 
+  // Departures start at a free stand and call Delivery for their clearance.
   spawnDeparture() {
-    const sids = PROCS[this.config].sids.filter(
-      (s) => this.aircraft.filter((a) => a.state === 'ground' && a.rwy === s.rwy).length < 3,
-    );
-    if (!sids.length) return;
-    const sid = rnd(sids);
-    const r = RUNWAYS[sid.rwy];
+    const onGround = this.aircraft.filter((a) => !a.isArr && ['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(a.state));
+    if (onGround.length >= 7) return;
+    const stand = this.freeStand();
+    if (!stand) return;
+    const sid = rnd(PROCS[this.config].sids);
+    const st = GROUND.stands[stand];
+    const n = GROUND.nodes[st.node];
     const ac = new Aircraft({
       cs: this.newCallsign(), type: rnd(TYPE_WEIGHTS), kind: 'dep',
-      x: r.thr.x, y: r.thr.y, alt: 0, tgtAlt: 0, spd: 0, hdg: r.heading, tgtHdg: r.heading,
-      state: 'ground', rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(),
+      x: n.x, y: n.y, alt: 0, tgtAlt: 0, spd: 0,
+      state: 'stand', stand, gnode: st.node, rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(),
       orig: AIRPORT.icao, dest: rnd(OUTSTATIONS[FIX_DIRECTION[sid.fixes[sid.fixes.length - 1]]]),
       squawk: this.newSquawk(), cleared: false, spawnTime: this.time, owner: 'TWR',
       cruise: rnd([240, 280, 320, 360]),
     });
+    ac.hdg = ac.tgtHdg = Geo.bearing(n, GROUND.toWorld(st.u, 0)); // nose-in to the terminal
     this.aircraft.push(ac);
-    ac.say(this, `Ravenwood Tower, holding point runway ${sid.rwy}, IFR to ${ac.dest}, request clearance`);
-    this.layoutGround();
+    ac.say(this, `Ravenwood Delivery, stand ${stand}, information ${this.atis}, IFR to ${ac.dest}, request clearance`);
   }
 
-  // Queue waiting departures beside their runway's threshold.
-  layoutGround() {
-    const counts = {};
-    for (const a of this.aircraft) {
-      if (a.state !== 'ground') continue;
-      const r = a.runway;
-      const n = (counts[a.rwy] = (counts[a.rwy] || 0) + 1);
-      const side = r.phys === 'N' ? -90 : 90; // outer side of the runway
-      const p = Geo.offset(r.thr, r.heading + side, 0.25);
-      const q = Geo.offset(p, r.heading + 180, 0.18 * (n - 1));
-      a.x = q.x; a.y = q.y;
+  freeStand() {
+    const used = new Set(this.aircraft.filter((a) => a.stand && a.state !== 'gone' &&
+      (a.isArr || a.state === 'stand' || a.state === 'pushback')).map((a) => a.stand));
+    const free = Object.keys(GROUND.stands).map(Number).filter((n) => !used.has(n));
+    return free.length ? rnd(free) : null;
+  }
+
+  // Another ground aircraft close ahead that this one must stop behind (in-trail, or at a holding point).
+  groundBlocker(ac) {
+    const v = Geo.vec(ac.hdg);
+    let best = null, bd = 75 / GROUND.M_PER_NM;
+    for (const o of this.aircraft) {
+      if (o === ac || !['taxi', 'pushback', 'ground', 'lineup'].includes(o.state)) continue;
+      const dx = o.x - ac.x, dy = o.y - ac.y, d = Math.hypot(dx, dy);
+      if (d > bd || d < 1e-7) continue;
+      if ((dx * v.x + dy * v.y) / d < Math.cos(Geo.rad(35))) continue;
+      // Opposite-direction traffic on a taxiway squeezes past rather than gridlocking.
+      if (o.state === 'taxi' && o.spd > 1 && Math.abs(Geo.diff(ac.hdg, o.hdg)) > 110) continue;
+      best = o; bd = d;
     }
+    if (best && best.state === 'taxi') {
+      // Both waiting for each other at a junction: the earlier aircraft has priority.
+      const w = Geo.vec(best.hdg), dx = ac.x - best.x, dy = ac.y - best.y, d = Math.hypot(dx, dy);
+      if ((dx * w.x + dy * w.y) / d >= Math.cos(Geo.rad(35)) && ac.age > best.age) return null;
+    }
+    return best;
   }
 
   // ---------- events & scoring ----------
@@ -176,6 +193,7 @@ class Game {
   }
 
   onLanded(ac) {
+    ac.stand = this.freeStand();
     this.stats.landed++;
     this.addScore(100, `${ac.cs} landed runway ${ac.rwy}`);
   }
@@ -230,6 +248,7 @@ class Game {
     }[p];
     this.log(`Position: ${POSITIONS[p].name}. ${desc}`, 'sys');
     this.radar.zoomFor(p);
+    this.autoTaxi = p !== 'TWR'; // Tower players taxi their own traffic by default
     if (this.selected && !this.userOwns(this.selected)) this.select(null);
     this.ui.update();
   }
@@ -396,6 +415,11 @@ class Game {
     return `${hh}:${mm}:${ss}Z`;
   }
 
+  setView(mode) {
+    this.viewMode = mode;
+    this.ui.update();
+  }
+
   togglePause() { this.paused = !this.paused; this.log(this.paused ? 'Simulation paused' : 'Simulation resumed', 'sys'); this.ui.update(); }
   setRate(r) { this.rate = r; this.log(`Simulation rate x${r}`, 'sys'); this.ui.update(); }
   setTraffic(t) { this.traffic = t; this.log(`Traffic density: ${t}`, 'sys'); this.nextArr = Math.min(this.nextArr, this.time + 10); this.ui.update(); }
@@ -404,13 +428,15 @@ class Game {
     this.config = c;
     this.atis = String.fromCharCode(((this.atis.charCodeAt(0) - 65 + 1) % 26) + 65);
     this.windBase.dir = Geo.norm(this.windBase.dir + 180);
-    // Waiting departures move to the new runway direction and pick a matching SID.
+    // Departures still on the ground switch to the new runway direction and a matching SID;
+    // those taxiing or at a holding point are re-routed to the new holding point.
     for (const a of this.aircraft) {
-      if (a.state !== 'ground' && a.state !== 'lineup') continue;
+      if (a.isArr || !['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(a.state)) continue;
       const exit = a.route[a.route.length - 1];
       const sid = PROCS[c].sids.find((s) => s.fixes[s.fixes.length - 1] === exit);
-      Object.assign(a, { state: 'ground', rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(), hdg: RUNWAYS[sid.rwy].heading });
-      a.tgtHdg = a.hdg;
+      Object.assign(a, { rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice() });
+      if (a.state === 'ground' || a.state === 'lineup') { a.state = 'taxi'; a.taxiPath = []; a.gnode = a.gnode || GROUND.nearestNode(a); }
+      if (a.state === 'taxi' && (a.taxiPath.length || a.taxiTarget)) a.startTaxi(GROUND.holdingPoints[a.rwy]);
     }
     this.log(`Runway configuration changed: ${this.activeRunways().join(' & ')} in use, information ${this.atis}, wind ${this.windText()}. New arrivals will use the new STARs; vector existing traffic as needed.`, 'sys');
     this.ui.update();

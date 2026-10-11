@@ -2,6 +2,9 @@
 // e.g.  BAW123 h 270 a 5000 s 210     |    i 26L    |    EZY45 caf    |    dct NORAX
 const COMMAND_HELP = [
   ['CAF', 'Cleared as filed (IFR clearance, SID, squawk, climb ' + SID_TOP + ')'],
+  ['PB', 'Pushback (off the stand onto the apron taxilane)'],
+  ['TAXI [A7|26R|12] [VIA P J3 A]', 'Taxi to a holding point / runway / stand, optionally via taxiways'],
+  ['HPOS / CONT', 'Hold position / continue taxi'],
   ['LU [rwy]', 'Line up and wait'],
   ['CTO [rwy]', 'Cleared for take-off'],
   ['H 270 / FH 270', 'Fly heading (shortest turn)'],
@@ -20,6 +23,8 @@ const COMMAND_HELP = [
   ['DEL', 'Delete aircraft'],
   ['.pause  .speed 2', 'Pause / simulation rate (1, 2, 4)'],
   ['.pos twr|app|all', 'Switch controller position (the other one is flown by AI)'],
+  ['.gnd / .radar', 'Show the ground (taxi) chart / the radar scope'],
+  ['.autotaxi', 'Toggle automatic taxiing of your aircraft'],
   ['.config 26 / 08', 'Change runway configuration'],
   ['.traffic low|med|high', 'Traffic density'],
   ['.routes all|sel|off', 'Route line display'],
@@ -35,6 +40,7 @@ const CMD_ALIASES = {
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
   CL: 'CL', CTL: 'CL', CLAND: 'CL',
+  PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
 };
@@ -69,7 +75,9 @@ class CommandProcessor {
 
     let toks = line.toUpperCase().split(/\s+/);
     // Glued forms like I26L, H270 or DCTNORAX.
+    const taxiCtx = toks.includes('TAXI') || toks.includes('TX'); // taxiway names like A7/H1 stay whole
     toks = toks.flatMap((t) => {
+      if (taxiCtx) return [t];
       const m = t.match(/^(ILS|I|APP|H|FH|TL|TR|S|A|C|D|LU|CTO)(\d+[LR]?)$/);
       return m && !g.findAircraft(t) ? [m[1], m[2]] : [t];
     });
@@ -183,10 +191,8 @@ class CommandProcessor {
         if (ac.isArr || ac.state === 'air') return 'unable, we are airborne';
         if (ac.state === 'takeoff') return 'already rolling';
         if (cmd === 'CTO' && !ac.cleared) return 'unable, we have not received our IFR clearance yet';
-        if (r !== ac.rwy) {
-          if (RUNWAYS[r].heading !== ac.runway.heading) return `unable, runway ${r} not in use for our departure`;
-          ac.rwy = r;
-        }
+        if (ac.state !== 'ground' && ac.state !== 'lineup') return `unable, we are not at the holding point yet${ac.state === 'stand' ? ' — still on stand ' + ac.stand : ''}`;
+        if (r !== ac.rwy) return `unable, we are at the holding point for runway ${ac.rwy}`;
         ac.x = ac.runway.thr.x; ac.y = ac.runway.thr.y;
         ac.hdg = ac.tgtHdg = ac.runway.heading;
         if (!this.opts.ai) g.checkRunwayClear(ac);
@@ -238,6 +244,50 @@ class CommandProcessor {
         g.transfer(ac, next, { ai: !!this.opts.ai });
         return `contact ${POSITIONS[next].call} ${POSITIONS[next].freq}, good day`;
       }
+      case 'PB': {
+        if (ac.state !== 'stand') return 'unable, we are not on stand';
+        if (!ac.isArr && !ac.cleared) return 'unable, we need our clearance first';
+        ac.pushback();
+        const hp = GROUND.nodes[GROUND.holdingPoints[ac.rwy]], st = GROUND.stands[ac.stand];
+        return `pushback approved, facing ${hp.u > st.u ? 'east' : 'west'}`;
+      }
+      case 'TAXI': {
+        if (!['stand', 'pushback', 'taxi', 'ground'].includes(ac.state)) return ac.state === 'landed' ? 'unable, still rolling out' : 'unable';
+        if (!ac.isArr && !ac.cleared) return 'unable, we need our IFR clearance first';
+        if (ac.state === 'pushback' && !ac.pushTo) return 'unable';
+        // Optional target: holding point (A7), runway (26R), or stand number (12 / S12).
+        let target = this.optional(cur, (t) => {
+          if (GROUND.nodes[t]?.kind === 'hold') return t;
+          const rw = parseRunway(t);
+          if (rw && !ac.isArr) return rw === ac.rwy ? GROUND.holdingPoints[rw] : null;
+          const m = t.match(/^(?:S|ST|STAND)?(\d{1,2})$/);
+          if (m && GROUND.stands[+m[1]]) return `ST${+m[1]}`;
+          return null;
+        });
+        if (!target) target = ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.holdingPoints[ac.rwy];
+        if (!target) return 'say again taxi instructions?';
+        if (target.startsWith('ST')) {
+          const num = +target.slice(2);
+          if (!ac.isArr) return 'unable, we are a departure';
+          if (num !== ac.stand && g.aircraft.some((o) => o !== ac && o.stand === num && o.state !== 'gone' && (o.isArr || o.state === 'stand'))) return `unable, stand ${num} is occupied`;
+          ac.stand = num;
+        }
+        const via = [];
+        if (cur.peek() === 'VIA') { cur.i++; while (cur.peek() && GROUND.taxiwayNames.has(cur.peek())) via.push(cur.next()); }
+        const r = ac.startTaxi(target, via);
+        if (!r) return 'unable, no taxi route';
+        const names = r.names.filter((n, i) => !(i === r.names.length - 1 && n === target));
+        const dest = target.startsWith('ST') ? `stand ${ac.stand}` : `holding point ${target}, runway ${ac.rwy}`;
+        return `${ac.state === 'pushback' ? 'pushback and ' : ''}taxi to ${dest}${names.length ? ' via ' + names.join(', ') : ''}`;
+      }
+      case 'HPOS':
+        if (ac.state !== 'taxi') return 'unable';
+        ac.holdPos = true;
+        return 'holding position';
+      case 'CONT':
+        if (ac.state !== 'taxi' || !ac.holdPos) return 'unable';
+        ac.holdPos = false;
+        return 'continuing taxi';
       case 'CL': {
         if (!ac.isArr || !ac.airborne) return 'unable';
         if (!ac.ils) return 'unable, we are not cleared for an approach';
@@ -335,6 +385,9 @@ class CommandProcessor {
       case 'help': case '?': g.ui.toggleHelp(true); break;
       case 'clear': g.ui.clearLog(); break;
       case 'restart': g.restart(); break;
+      case 'gnd': case 'ground': case 'taxi': g.setView('ground'); break;
+      case 'radar': case 'scope': g.setView('radar'); break;
+      case 'autotaxi': g.autoTaxi = !g.autoTaxi; g.log(`Automatic taxi ${g.autoTaxi ? 'on' : 'off'}`, 'sys'); g.ui.update(); break;
       case 'pos': case 'position': {
         const p = a.toUpperCase();
         if (['ALL', 'TWR', 'APP'].includes(p)) g.setPosition(p); else g.log('Usage: .pos twr | app | all', 'err');

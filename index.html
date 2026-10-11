@@ -38,6 +38,7 @@
         <option value="off">Routes: off</option>
       </select>
       <label class="chk"><input type="checkbox" id="chk-procs"> Procs</label>
+      <label class="chk" title="AI ground handles pushback and taxi for your aircraft"><input type="checkbox" id="chk-autotaxi"> Auto taxi</label>
       <label class="chk"><input type="checkbox" id="chk-voice"> Voice</label>
       <button id="btn-pause">❚❚ Pause</button>
       <button id="btn-x1">x1</button><button id="btn-x2">x2</button><button id="btn-x4">x4</button>
@@ -48,6 +49,10 @@
   <main>
     <section id="scope">
       <canvas id="radar"></canvas>
+      <div id="viewtabs" role="tablist">
+        <button id="tab-radar" class="on">Radar</button>
+        <button id="tab-ground">Ground chart</button>
+      </div>
       <div id="ctxmenu" hidden></div>
       <div id="legend">
         <span><i class="ln dep"></i>Departure route</span>
@@ -81,6 +86,15 @@
         once they're above FL100 and 20 nm out. They follow their SID (blue route).</p>
       <p>Keep <b>3 nm or 1000 ft</b> between airborne aircraft, and on final keep <b>4 nm</b> behind a heavy (H) for another
         heavy and <b>5 nm</b> for a medium. Yellow tags = predicted conflict or wake spacing, red = separation lost.</p>
+      <h2>Ground chart (Tower)</h2>
+      <p>Switch to <b>Ground chart</b> (tab at the top left of the scope, or <code>.gnd</code>) to see the airfield.
+        Departures start on a stand and call Delivery. Give them <code>caf</code>, then <code>taxi</code>: they push back and
+        taxi to their runway's holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L). You can name the route:
+        <code>taxi A7 via P J3 A</code>. Once they report ready at the holding point, use <code>lu</code> / <code>cto</code>.
+        Arrivals vacate at the first exit they can make and ask for taxi; <code>taxi</code> sends them to their stand
+        (or <code>taxi 14</code> for stand 14). <code>hpos</code> and <code>cont</code> stop and restart a taxiing aircraft.
+        Right-click a holding point or stand on the chart for the same instructions. With <b>Auto taxi</b> ticked, ground
+        movement is handled for you.</p>
       <h2>Mouse</h2>
       <p>Click an aircraft to select it. <b>Press and hold a waypoint</b> to send the selected aircraft direct to it (a ring fills
         around the fix). <b>Right-click a waypoint</b> for direct, holding (as published or with your own turns) and
@@ -122,6 +136,7 @@
   <script src="js/geo.js"></script>
   <script src="js/data.js"></script>
   <script src="js/aircraft.js"></script>
+  <script src="js/ground.js"></script>
   <script src="js/commands.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/radar.js"></script>

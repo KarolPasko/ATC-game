@@ -42,6 +42,11 @@ main { display: grid; grid-template-columns: 1fr 330px; min-height: 0; }
 #ctxmenu button { text-align: left; border: none; background: transparent; padding: 6px 8px; }
 #ctxmenu button:hover, #ctxmenu button:focus-visible { background: #234452; color: var(--cyan); }
 #ctxmenu button.cancel { color: var(--dim); }
+#viewtabs { position: absolute; top: 8px; left: 10px; display: flex; gap: 0; z-index: 4; }
+#viewtabs button { border-radius: 0; padding: 4px 12px; }
+#viewtabs button:first-child { border-radius: 3px 0 0 3px; }
+#viewtabs button:last-child { border-radius: 0 3px 3px 0; border-left: none; }
+#viewtabs button.on { background: #234452; border-color: var(--cyan); color: var(--cyan); }
 #legend { position: absolute; bottom: 34px; left: 12px; display: flex; gap: 14px; color: var(--dim); font-size: 10px; pointer-events: none; flex-wrap: wrap; }
 .ln { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin-right: 5px; }
 .ln.dep { background: var(--dep); } .ln.arr { background: var(--arr); }

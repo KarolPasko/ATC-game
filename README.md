@@ -33,6 +33,19 @@ radio calls are dimmed in the log. You only lose points for separation involving
   climb them, and hand them off (`ho`) once they're above FL100 and 20 nm out. Their SID is drawn in **blue**.
 - Keep **3 nm or 1000 ft** between airborne aircraft. A yellow tag means a predicted conflict; red means separation is lost.
 
+### Ground chart (Tower)
+
+Switch the scope to **Ground chart** (tab at the top left, or `.gnd`) to see the airfield:
+- **Taxiways:** parallel taxiways A and B, rapid exits K/M, cross taxiways E and F, and apron taxilanes P and Q.
+- **Holding points:** A1–A7 and B1–B7, with stop bars.
+- **Stands and buildings:** 24 stands around the terminal, plus the control tower and the fire station.
+
+Departures start on a stand and call Delivery. Give them `caf`, then `taxi`: they push back and taxi to their runway's
+holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L). You can name the route (`taxi A7 via P J3 A`). When they report
+ready, use `lu`/`cto`. Arrivals vacate at the first exit they can make and ask for taxi; `taxi` sends them to their stand
+(or `taxi 14` for stand 14). Right-click a holding point or stand on the chart for the same options. Tick **Auto taxi** to let
+the AI do ground movement.
+
 ### Mouse
 
 | Action | Effect |
@@ -52,7 +65,10 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | Command | Meaning |
 | --- | --- |
 | `caf` | Cleared as filed: IFR clearance, SID, squawk, initial climb 6000 |
-| `lu [rwy]` | Line up and wait |
+| `pb` | Pushback |
+| `taxi [A7\|26R\|12] [via P J3 A]` | Taxi to a holding point, runway or stand, optionally via named taxiways |
+| `hpos` / `cont` | Hold position / continue taxi |
+| `lu [rwy]` | Line up and wait (at the holding point) |
 | `cto [rwy]` | Cleared for take-off |
 | `h 270` / `tl 180` / `tr 090` | Heading, shortest turn / turn left / turn right |
 | `a 5000`, `c FL120`, `d 30` | Climb/descend (values ≤ 600 are read as flight levels) |
@@ -68,7 +84,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `sq 4521` | Squawk code |
 | `del` | Delete an aircraft |
 
-System commands: `.pos twr|app|all`, `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
+System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos twr|app|all`, `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
 `.procs`, `.voice`, `.help`, `.restart`.
 
 ## Realism
@@ -99,6 +115,7 @@ separation loss −50 · wake spacing −30 · departure leaving without a hando
 | `js/data.js` | Runways, waypoints, STARs/SIDs/approaches, aircraft performance |
 | `js/aircraft.js` | Flight model, route following, localizer and glideslope capture, holds |
 | `js/commands.js` | Command line parser |
+| `js/ground.js` | Airfield layout, taxi routing, ground movement and the ground chart |
 | `js/ai.js` | AI controller for the position you are not working |
 | `js/game.js` | Simulation loop, traffic spawning, separation checks, scoring |
 | `js/radar.js` | Radar scope drawing and mouse interaction |

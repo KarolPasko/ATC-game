@@ -3,7 +3,7 @@ const GS_FT_PER_NM = Math.tan(Geo.rad(3)) * 6076.12; // ~318 ft/nm
 const MAX_BANK = 25; // deg
 
 // Used when simulating a "ghost" copy of an aircraft for path prediction.
-const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {} };
+const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {}, groundBlocker() { return null; } };
 
 class Aircraft {
   constructor(o) {
@@ -91,6 +91,12 @@ class Aircraft {
       case 'lineup':
       case 'gone':
         return;
+      case 'stand':
+      case 'pushback':
+      case 'taxi':
+      case 'parked':
+        this.groundUpdate(dt, game);
+        return;
       case 'takeoff':
         this.spd += 4 * dt;
         this.move(dt);
@@ -100,9 +106,7 @@ class Aircraft {
         }
         return;
       case 'landed':
-        this.spd = Math.max(0, this.spd - 4 * dt);
-        this.move(dt);
-        if (this.spd < 30) this.state = 'gone';
+        this.rollOut(dt, game);
         return;
     }
 
@@ -389,7 +393,7 @@ class Aircraft {
       hold: this.hold ? { ...this.hold, announced: true } : null,
       trail: [], endOfRouteWarned: true, calledDeparture: true, landClr: true,
     });
-    if (g.state === 'ground' || g.state === 'lineup') {
+    if (!g.isArr && ['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(g.state)) {
       Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.thr.x, y: g.runway.thr.y, hdg: g.runway.heading });
       if (g.tgtAlt < SID_TOP) g.tgtAlt = SID_TOP;
     }

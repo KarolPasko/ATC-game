@@ -35,8 +35,11 @@ class Radar {
     this.showProcs = false;
     this.mouse = { x: 0, y: 0, down: false, dragged: false };
     this.hitBoxes = [];
+    this.groundView = new GroundView(this);
     this.bindMouse();
     window.addEventListener('resize', () => this.resize());
+    // The scope's size also changes when the top bar wraps or panels resize, not just the window.
+    if (window.ResizeObserver) new ResizeObserver(() => this.resize()).observe(canvas);
     this.resize();
   }
 
@@ -85,7 +88,7 @@ class Radar {
       Object.assign(this.mouse, { down: true, dragged: false, sx: e.offsetX, sy: e.offsetY, x: e.offsetX, y: e.offsetY });
       // Press-and-hold a waypoint to send the selected aircraft there.
       const ac = this.hitAircraft(e.offsetX, e.offsetY);
-      const fix = !ac && g.selected && this.hitFix(e.offsetX, e.offsetY);
+      const fix = g.viewMode === 'radar' && !ac && g.selected && this.hitFix(e.offsetX, e.offsetY);
       this.press = fix ? { fix, ac: g.selected, t0: performance.now(), done: false } : null;
     });
     c.addEventListener('pointerup', (e) => {
@@ -105,16 +108,19 @@ class Radar {
         if (this.mouse.dragged || Math.hypot(dx, dy) > 5) {
           this.mouse.dragged = true;
           this.press = null;
-          this.view.cx -= dx / this.view.scale;
-          this.view.cy += dy / this.view.scale;
+          if (g.viewMode === 'ground') this.groundView.pan(dx, dy);
+          else { this.view.cx -= dx / this.view.scale; this.view.cy += dy / this.view.scale; }
           this.mouse.sx = e.offsetX; this.mouse.sy = e.offsetY;
         }
       }
-      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || (g.selected && this.hitFix(e.offsetX, e.offsetY)) ? 'pointer' : 'crosshair';
+      const overTarget = g.viewMode === 'ground' ? g.selected && this.groundView.hitNode(e.offsetX, e.offsetY) : g.selected && this.hitFix(e.offsetX, e.offsetY);
+      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || overTarget ? 'pointer' : 'crosshair';
     });
     c.addEventListener('pointerleave', () => { if (!this.mouse.down) this.mouse.x = -1; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.mouse.x = e.offsetX; this.mouse.y = e.offsetY; // keep hover in step with the zoom
+      if (g.viewMode === 'ground') return this.groundView.zoom(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
       const before = this.toWorld(e.offsetX, e.offsetY);
       this.view.scale = Geo.clamp(this.view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 2, 120);
       const after = this.toWorld(e.offsetX, e.offsetY);
@@ -127,6 +133,11 @@ class Radar {
       this.press = null;
       const ac = g.selected;
       if (!ac || ac.state === 'gone') return;
+      if (g.viewMode === 'ground') {
+        const n = this.groundView.hitNode(e.offsetX, e.offsetY);
+        if (n) this.openGroundMenu(n, ac, e.offsetX, e.offsetY);
+        return;
+      }
       const fix = this.hitFix(e.offsetX, e.offsetY);
       if (fix) return this.openMenu(fix, ac, e.offsetX, e.offsetY);
       if (!ac.airborne) return;
@@ -169,6 +180,39 @@ class Radar {
     this.menu.style.top = Math.min(sy + 8, this.h - h - 8) + 'px';
   }
 
+  showMenu(title, info, items, sx, sy) {
+    this.menu.innerHTML = `<div class="mh">${esc(title)} <span>${esc(info)}</span></div>` +
+      items.map(([l, c]) => `<button data-cmd="${esc(c)}">${esc(l)}</button>`).join('') +
+      '<button data-cmd="" class="cancel">Cancel</button>';
+    this.menu.hidden = false;
+    const w = this.menu.offsetWidth, h = this.menu.offsetHeight;
+    this.menu.style.left = Math.min(sx + 8, this.w - w - 8) + 'px';
+    this.menu.style.top = Math.min(sy + 8, this.h - h - 8) + 'px';
+  }
+
+  // Ground chart: right-click a holding point or stand.
+  openGroundMenu(n, ac, sx, sy) {
+    const cs = ac.cs, items = [];
+    const canTaxi = ['stand', 'pushback', 'taxi', 'ground'].includes(ac.state);
+    if (n.kind === 'hold' && !ac.isArr && canTaxi) {
+      const rwys = Object.entries(GROUND.holdingPoints).filter(([, hp]) => hp === n.name).map(([r]) => r);
+      if (rwys.includes(ac.rwy)) {
+        items.push([`Taxi to holding point ${n.name} (runway ${ac.rwy})`, `${cs} taxi ${n.name}`]);
+        const side = n.name[0];
+        items.push([`… via ${side === 'A' ? 'P, A' : 'Q, B'}`, `${cs} taxi ${n.name} via ${side === 'A' ? 'P J1 J2 J3 A' : 'Q H1 H2 H3 B'}`]);
+      } else items.push([`${n.name} is not a holding point for runway ${ac.rwy}`, '']);
+    }
+    if (n.kind === 'stand' && ac.isArr && canTaxi) {
+      const num = +n.name.slice(2);
+      items.push([`Taxi to stand ${num}`, `${cs} taxi ${num}`]);
+    }
+    if (ac.state === 'stand' && !ac.isArr) items.push(['Pushback', `${cs} pb`]);
+    if (ac.state === 'taxi' && ac.taxiPath.length) items.push(ac.holdPos ? ['Continue taxi', `${cs} cont`] : ['Hold position', `${cs} hpos`]);
+    if (!items.length) items.push(['No ground instructions for this aircraft here', '']);
+    const what = n.kind === 'stand' ? `stand ${n.name.slice(2)}` : `holding point ${n.name}`;
+    this.showMenu(`${cs} → ${what}`, ac.state.toUpperCase(), items, sx, sy);
+  }
+
   closeMenu() { if (this.menu) this.menu.hidden = true; }
 
   click(sx, sy) {
@@ -184,12 +228,14 @@ class Radar {
     return null;
   }
 
+  // Hit-test only the waypoints actually drawn last frame, on the symbol or its label.
   hitFix(sx, sy) {
-    let best = null, bd = 9;
-    for (const f of Object.values(FIXES)) {
-      const p = this.toScreen(f);
-      const d = Math.hypot(p.x - sx, p.y - sy);
-      if (d < bd) { bd = d; best = f; }
+    let best = null, bd = 12;
+    for (const v of this.visibleFixes || []) {
+      const d = Math.hypot(v.x - sx, v.y - sy);
+      const onLabel = sx >= v.lx - 2 && sx <= v.lx + v.lw + 2 && sy >= v.ly - 11 && sy <= v.ly + 3;
+      const score = onLabel ? Math.min(d, 6) : d;
+      if (score < bd) { bd = score; best = v.f; }
     }
     return best;
   }
@@ -198,6 +244,17 @@ class Radar {
   draw() {
     const ctx = this.ctx, g = this.game;
     if (!this.w) this.resize();
+    if (g.viewMode === 'ground') {
+      this.groundView.draw();
+      if (g.paused) {
+        ctx.fillStyle = 'rgba(255,216,74,0.9)';
+        ctx.font = 'bold 16px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('SIMULATION PAUSED', this.w / 2, 28);
+        ctx.textAlign = 'left';
+      }
+      return;
+    }
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, this.w, this.h);
     this.hitBoxes = [];
@@ -215,7 +272,7 @@ class Radar {
       if (sel) this.drawRoute(sel, true);
     }
     for (const ac of g.aircraft) {
-      if (ac.state === 'ground' || ac.state === 'lineup') this.drawGround(ac);
+      if (ac.onGround() && ac.state !== 'landed') this.drawGround(ac);
       else if (ac.state !== 'gone') this.drawAircraft(ac);
     }
     this.drawPress();
@@ -314,6 +371,7 @@ class Radar {
   drawFixes() {
     const ctx = this.ctx, s = this.view.scale;
     const hover = this.game.selected && this.mouse.x >= 0 ? this.hitFix(this.mouse.x, this.mouse.y) : null;
+    const visible = [];
     ctx.font = '10px "JetBrains Mono", monospace';
     // IF/FAF/SID fixes are only shown for runways in use.
     const active = new Set();
@@ -342,11 +400,13 @@ class Radar {
       let label = f.name;
       if (f.alt && s >= 7) label += ` A${String(f.alt / 100).padStart(3, '0')}`;
       ctx.fillText(label, p.x + 6, p.y + 10);
+      visible.push({ f, x: p.x, y: p.y, lx: p.x + 6, ly: p.y + 10, lw: ctx.measureText(label).width });
     }
+    this.visibleFixes = visible;
   }
 
   drawRoute(ac, selected) {
-    if (ac.state === 'gone' || ac.state === 'landed' || ac.handedOff) return;
+    if (ac.state === 'gone' || ac.handedOff || (ac.isArr && ac.onGround())) return;
     const now = performance.now();
     if (!ac._pred || now - ac._predT > 400) { ac._pred = ac.predictPath(); ac._predT = now; }
     const { pts, vectored, tail } = ac._pred;
@@ -494,15 +554,17 @@ class Radar {
   }
 
   drawGround(ac) {
-    if (this.view.scale < 5) return;
+    if (this.view.scale < 14 && ac !== this.game.selected) return;
     const ctx = this.ctx;
     const p = this.toScreen(ac);
     const sel = ac === this.game.selected;
     const col = sel ? COLORS.tagSel : ac.cleared ? '#9fe29f' : COLORS.ground;
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+    // Ground traffic is labelled on the radar only when selected; the ground chart has the detail.
+    if (!sel && this.view.scale < 90) { this.hitBoxes.push({ ac, x0: p.x - 6, y0: p.y - 6, x1: p.x + 6, y1: p.y + 6 }); return; }
     ctx.font = '10px "JetBrains Mono", monospace';
-    const label = ac.cs + (ac.state === 'lineup' ? ' LU' : '');
+    const label = ac.cs + (ac.state === 'lineup' ? ' LU' : ac.state === 'ground' ? ' HP' : '');
     const r = ac.runway;
     const left = r.heading === 80; // keep labels away from the runway
     const w = ctx.measureText(label).width;

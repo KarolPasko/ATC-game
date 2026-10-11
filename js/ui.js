@@ -54,6 +54,9 @@ class UI {
     $('sel-traffic').onchange = (e) => g.setTraffic(e.target.value);
     $('sel-routes').onchange = (e) => g.radar.setRoutes(e.target.value);
     $('sel-pos').onchange = (e) => g.setPosition(e.target.value);
+    $('chk-autotaxi').onchange = (e) => { g.autoTaxi = e.target.checked; };
+    $('tab-radar').onclick = () => g.setView('radar');
+    $('tab-ground').onclick = () => g.setView('ground');
     $('chk-procs').onchange = (e) => { g.radar.showProcs = e.target.checked; };
     $('chk-voice').onchange = (e) => { g.voice = e.target.checked; };
     // Strip and quick-button clicks (delegated).
@@ -65,7 +68,8 @@ class UI {
       const b = e.target.closest('[data-cmd]');
       if (!b || !g.selected) return;
       const cmd = b.dataset.cmd;
-      if (cmd.endsWith(' ')) { this.input.value = cmd; this.input.focus(); }
+      if (cmd.startsWith('.')) g.commands.execute(cmd);
+      else if (cmd.endsWith(' ')) { this.input.value = cmd; this.input.focus(); }
       else g.commands.execute(`${g.selected.cs} ${cmd}`);
     });
   }
@@ -99,6 +103,9 @@ class UI {
     for (const r of [1, 2, 4]) $(`btn-x${r}`).classList.toggle('on', g.rate === r);
     $('sel-config').value = g.config;
     $('sel-pos').value = g.position;
+    $('chk-autotaxi').checked = g.autoTaxi;
+    $('tab-radar').classList.toggle('on', g.viewMode === 'radar');
+    $('tab-ground').classList.toggle('on', g.viewMode === 'ground');
     $('sel-traffic').value = g.traffic;
     $('sel-routes').value = g.radar.routes;
     $('chk-procs').checked = g.radar.showProcs;
@@ -115,7 +122,11 @@ class UI {
     const sel = ac === g.selected ? ' sel' : '';
     const conf = ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
-    if (ac.state === 'ground') status = ac.cleared ? 'CLRD' : 'REQ CLR';
+    if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
+    else if (ac.state === 'pushback') status = 'PUSHBACK';
+    else if (ac.state === 'taxi') status = !ac.taxiPath.length ? 'REQ TAXI' : ac.holdPos ? 'HOLD POSN' : ac.isArr ? `TAXI S${ac.stand}` : `TAXI ${ac.taxiTarget}`;
+    else if (ac.state === 'parked') status = `ON STAND ${ac.stand}`;
+    else if (ac.state === 'ground') status = `HP ${ac.gnode} RDY`;
     else if (ac.isArr && ac.owner === 'TWR' && ac.airborne && !ac.landClr && g.position !== 'ALL') status = 'REQ LDG CLR';
     else if (ac.state === 'lineup') status = 'LINED UP';
     else if (ac.state === 'takeoff') status = 'T/O ROLL';
@@ -155,10 +166,16 @@ class UI {
     } else {
       const route = (ac.isArr ? [ac.star.slice(0, 5)] : []).concat(ac.route).join(' ') || '—';
       const btn = (label, cmd) => `<button data-cmd="${esc(cmd)}">${esc(label)}</button>`;
-      if (ac.state === 'ground' || ac.state === 'lineup') {
-        quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
-      } else if (!this.game.userOwns(ac)) {
+      if (!this.game.userOwns(ac)) {
         quick = `<span class="notmine">With ${esc(POSITIONS[ac.owner].name)}${ac.owner !== 'CTR' ? ' (AI)' : ''}</span>`;
+      } else if (['stand', 'pushback', 'taxi'].includes(ac.state)) {
+        if (!ac.isArr && !ac.cleared) quick += btn('CAF', 'caf');
+        if (ac.state === 'stand' && !ac.isArr) quick += btn('Pushback', 'pb');
+        if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, 'taxi') + btn('Taxi…', 'taxi ');
+        if (ac.state === 'taxi' && ac.taxiPath.length) quick += ac.holdPos ? btn('Continue', 'cont') : btn('Hold position', 'hpos');
+        quick += btn('Ground chart', '.gnd');
+      } else if (ac.state === 'ground' || ac.state === 'lineup') {
+        quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
       } else if (ac.state === 'air') {
         quick = btn('Heading…', 'h ') + btn('Alt…', 'a ') + btn('Speed…', 's ') + btn('Direct…', 'dct ');
         quick += btn('Hold…', 'hold ');
