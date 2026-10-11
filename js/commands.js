@@ -11,7 +11,7 @@ const COMMAND_HELP = [
   ['DCT NORAX', 'Proceed direct to waypoint (then continue route)'],
   ['I 26L / ILS 26L', 'Cleared ILS approach (intercept from vectors)'],
   ['APP 26R', 'Cleared full approach: fly IAF→IF→FAF, descend via, then ILS'],
-  ['HOLD [fix]', 'Hold at fix (right-hand turns, 1 min legs)'],
+  ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
   ['HO', 'Hand off / contact next sector (departures)'],
@@ -91,6 +91,7 @@ class CommandProcessor {
       if (res) rb.push(res);
       cur.i++;
     }
+    ac._pred = null; // re-predict the flight path
     if (rb.length) ac.say(g, rb.join(', '));
   }
 
@@ -122,7 +123,10 @@ class CommandProcessor {
         const was = ac.state === 'air' ? ac.alt : 0;
         ac.tgtAlt = alt;
         const verb = alt > was + 50 ? 'climb' : alt < was - 50 ? 'descend' : 'maintain';
-        return `${verb} ${alt >= AIRPORT.transAlt + 500 ? 'flight level ' + Math.round(alt / 100) : alt + ' ft'}`;
+        if (alt >= AIRPORT.transAlt + 500) return `${verb} flight level ${Math.round(alt / 100)}`;
+        // Descending through the transition level: pilots set the airfield QNH.
+        const qnh = was >= AIRPORT.transAlt + 500 ? `, QNH ${AIRPORT.qnh}` : '';
+        return `${verb} altitude ${alt} ft${qnh}`;
       }
       case 'S': {
         const t = arg();
@@ -184,12 +188,18 @@ class CommandProcessor {
       }
       case 'HOLD': {
         if (this.needAir(ac)) return this.needAir(ac);
-        const next = this.optional(cur, (t) => FIXES[t] && t) || ac.route[0];
-        if (!next || !FIXES[next]) return 'say again hold fix?';
-        ac.est = ac.gs = false;
-        ac.mode = 'hold';
-        ac.hold = { fix: next, phase: 'to', inbound: null, timer: 0 };
-        return `hold at ${next}, right turns`;
+        const fix = this.optional(cur, (t) => FIXES[t] && t) || (ac.mode === 'route' && ac.route[0]) || null;
+        if (!fix) return 'say again hold fix?';
+        const inbound = this.optional(cur, (t) => (/^\d{3}$/.test(t) && +t <= 360 ? +t || 360 : null));
+        const turn = this.optional(cur, (t) => ({ L: 'L', LEFT: 'L', R: 'R', RIGHT: 'R' })[t] || null);
+        const leg = this.optional(cur, (t) => {
+          const m = t.match(/^(\d(?:\.\d)?)(M|MIN)$/);
+          return m ? parseFloat(m[1]) * 60 : null;
+        });
+        const h = ac.enterHold(fix, inbound, turn, leg);
+        const published = HOLDS[fix] && inbound === null && turn === null;
+        return `hold at ${fix}${published ? ' as published' : ''}, inbound ${Geo.fmtHdg(h.inbound)}, ` +
+          `${h.turn === 'R' ? 'right' : 'left'} turns${leg ? `, ${leg / 60} minute legs` : ''}`;
       }
       case 'RES': {
         if (this.needAir(ac)) return this.needAir(ac);
@@ -237,7 +247,24 @@ class CommandProcessor {
 
   directTo(ac, name) {
     const idx = ac.route.indexOf(name);
-    ac.route = idx >= 0 ? ac.route.slice(idx) : [name];
+    if (idx >= 0) ac.route = ac.route.slice(idx);
+    else {
+      // Off-route fix: fly to it, then rejoin the route at the nearest point ahead.
+      const fix = FIXES[name];
+      let rest = ac.route.slice();
+      if (rest.length) {
+        // Never rejoin beyond the first approach fix (IAF/IF), so the approach is still flown properly.
+        const appIdx = rest.findIndex((n) => FIXES[n].type === 'iaf' || FIXES[n].type === 'if');
+        const maxK = appIdx >= 0 ? appIdx : rest.length - 1;
+        let k = 0;
+        rest.forEach((n, i) => { if (i <= maxK && Geo.dist(fix, FIXES[n]) < Geo.dist(fix, FIXES[rest[k]])) k = i; });
+        // Skip the rejoin fix if reaching it means flying back against the route's direction.
+        const cur = FIXES[rest[k]], next = rest[k + 1] && FIXES[rest[k + 1]];
+        if (next && k < maxK && (cur.x - fix.x) * (next.x - cur.x) + (cur.y - fix.y) * (next.y - cur.y) < 0) k++;
+        rest = rest.slice(k);
+      }
+      ac.route = [name, ...rest];
+    }
     if (ac.state !== 'ground') {
       ac.mode = 'route';
       ac.hold = null;

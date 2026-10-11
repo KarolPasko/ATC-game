@@ -66,6 +66,31 @@ addFix('NIBEX', { x: -13, y: 15 }, 'enroute');
 addFix('ETRAX', { x: 13, y: 27 }, 'enroute');
 addFix('SIPOR', { x: -11, y: -16 }, 'enroute');
 addFix('EBRIK', { x: 16, y: -20 }, 'enroute');
+addFix('ARKOS', { x: -20, y: 30 }, 'enroute');
+addFix('BELTA', { x: 20, y: 38 }, 'enroute');
+addFix('CORVU', { x: 38, y: -15 }, 'enroute');
+addFix('DAMEK', { x: -18, y: -35 }, 'enroute');
+addFix('ELNAR', { x: -36, y: -22 }, 'enroute');
+addFix('FIRZO', { x: -36, y: 26 }, 'enroute');
+addFix('GOLVA', { x: 12, y: 15 }, 'enroute');
+addFix('HEXOR', { x: 25, y: -13 }, 'enroute');
+addFix('IRVAN', { x: -9, y: -32 }, 'enroute');
+addFix('JUPAL', { x: 36, y: -5 }, 'enroute');
+addFix('KUTRA', { x: -22, y: -10 }, 'enroute');
+addFix('LOVIS', { x: -19, y: 6 }, 'enroute');
+addFix('MOSKA', { x: 6, y: -11 }, 'enroute');
+addFix('NURPA', { x: 23, y: 19 }, 'enroute');
+addFix('OSTEP', { x: -4, y: 35 }, 'enroute');
+addFix('PRAVO', { x: 16, y: -34 }, 'enroute');
+addFix('RUSKO', { x: -28, y: -38 }, 'enroute');
+addFix('TELBA', { x: 35, y: 28 }, 'enroute');
+addFix('VEXAN', { x: -33, y: 8 }, 'enroute');
+addFix('YAMIK', { x: 31, y: 9 }, 'enroute');
+addFix('ZEPRA', { x: -4, y: 17 }, 'enroute');
+// VOR/DME beacons
+addFix('RVW', { x: 1.5, y: -2.4 }, 'vor');
+addFix('OKR', { x: 27, y: 26 }, 'vor');
+addFix('DXT', { x: -24, y: -25 }, 'vor');
 
 // Approach fixes: IAF (15 nm, 8 nm offset), IF (11 nm), FAF (6.3 nm, on the 3° glideslope at 2000 ft)
 const APPROACHES = {
@@ -92,18 +117,18 @@ for (const [rwy, name] of Object.entries(SID_FIRST)) {
 const PROCS = {
   '26': {
     stars: [
-      { name: 'BOGNA1R', rwy: '26R', fixes: ['BOGNA', 'SOTAX', 'NORAX'] },
+      { name: 'BOGNA1R', rwy: '26R', fixes: ['BOGNA', 'OSTEP', 'SOTAX', 'GOLVA', 'NORAX'] },
       { name: 'MIRLO1R', rwy: '26R', fixes: ['MIRLO', 'SOTAX', 'NORAX'] },
-      { name: 'TIMBA1R', rwy: '26R', fixes: ['TIMBA', 'NORAX'] },
+      { name: 'TIMBA1R', rwy: '26R', fixes: ['TIMBA', 'NURPA', 'NORAX'] },
       { name: 'LAMSO1L', rwy: '26L', fixes: ['LAMSO', 'GIBRA', 'SUREK'] },
-      { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'SUREK'] },
+      { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'HEXOR', 'SUREK'] },
       { name: 'DEXOR1L', rwy: '26L', fixes: ['DEXOR', 'NEKOS', 'SUREK'] },
-      { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'ULMAR', 'FOXEN', 'SUREK'] },
+      { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'ULMAR', 'KUTRA', 'FOXEN', 'SUREK'] },
     ],
     sids: [
       { name: 'NOVAL2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'NOVAL'] },
       { name: 'ESTOR2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'ETRAX', 'ESTOR'] },
-      { name: 'WOLFE2L', rwy: '26L', fixes: ['SALMA', 'WOLFE'] },
+      { name: 'WOLFE2L', rwy: '26L', fixes: ['SALMA', 'LOVIS', 'WOLFE'] },
       { name: 'SUDAN2L', rwy: '26L', fixes: ['SALMA', 'SIPOR', 'SUDAN'] },
     ],
   },
@@ -125,6 +150,37 @@ const PROCS = {
     ],
   },
 };
+// Published holding patterns: inbound course, turn direction, minimum holding altitude.
+const HOLDS = {
+  BOGNA: { inbound: 180, turn: 'R', minAlt: 9000 },
+  TIMBA: { inbound: 225, turn: 'R', minAlt: 9000 },
+  LAMSO: { inbound: 265, turn: 'L', minAlt: 9000 },
+  KOPAS: { inbound: 315, turn: 'R', minAlt: 9000 },
+  DEXOR: { inbound: 360, turn: 'L', minAlt: 9000 },
+  VAREN: { inbound: 85, turn: 'R', minAlt: 9000 },
+  MIRLO: { inbound: 135, turn: 'L', minAlt: 9000 },
+  SOTAX: { inbound: 175, turn: 'R', minAlt: 6000 },
+  GIBRA: { inbound: 260, turn: 'R', minAlt: 6000 },
+  NEKOS: { inbound: 5, turn: 'R', minAlt: 6000 },
+  ULMAR: { inbound: 90, turn: 'L', minAlt: 6000 },
+  NORAX: { inbound: 200, turn: 'R', minAlt: 4000 },
+  SUREK: { inbound: 300, turn: 'L', minAlt: 4000 },
+  KELVO: { inbound: 125, turn: 'L', minAlt: 4000 },
+  ZUBIN: { inbound: 35, turn: 'R', minAlt: 4000 },
+  RVW: { inbound: 80, turn: 'R', minAlt: 4000 },
+  OKR: { inbound: 225, turn: 'R', minAlt: 7000 },
+  DXT: { inbound: 45, turn: 'L', minAlt: 7000 },
+};
+const HOLD_SPEED = (alt) => (alt <= 14000 ? 230 : alt <= 20000 ? 240 : 265);
+const HOLD_LEG = (alt) => (alt <= 14000 ? 60 : 90); // seconds
+
+// Surface wind (direction it blows FROM); it veers and strengthens with height.
+const WIND = { dir: 250, spd: 12 };
+function windAt(alt) {
+  const k = Math.min(alt, 25000) / 1000;
+  return { dir: WIND.dir + k * 1.2, spd: WIND.spd + k * 1.6 };
+}
+
 const SID_TOP = 6000; // initial climb altitude on all SIDs
 
 // ---- Aircraft performance ----

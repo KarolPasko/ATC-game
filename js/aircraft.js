@@ -1,5 +1,9 @@
-// Aircraft model: flight dynamics, navigation, ILS and procedure logic.
+// Aircraft model: flight dynamics, navigation, ILS, holding and path prediction.
 const GS_FT_PER_NM = Math.tan(Geo.rad(3)) * 6076.12; // ~318 ft/nm
+const MAX_BANK = 25; // deg
+
+// Used when simulating a "ghost" copy of an aircraft for path prediction.
+const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {} };
 
 class Aircraft {
   constructor(o) {
@@ -12,7 +16,7 @@ class Aircraft {
       state: 'air', // ground | lineup | takeoff | air | landed | gone
       cleared: false, handedOff: false,
       trail: [], trailTimer: 0, conflict: 0, prevLateral: null,
-      age: 0, endOfRouteWarned: false,
+      age: 0, endOfRouteWarned: false, calledDeparture: false,
     }, o);
     this.perf = TYPES[this.type];
     this.wake = this.perf.wake;
@@ -23,6 +27,36 @@ class Aircraft {
   get runway() { return RUNWAYS[this.rwy]; }
 
   say(game, text) { game.pilotSay(this, text); }
+
+  // ---------- speeds, wind and turn performance ----------
+  tas() { return this.spd * (1 + (this.alt / 1000) * 0.018); }
+
+  // Ground velocity in nm/s (air mass movement + wind when airborne).
+  vel() {
+    const v = Geo.vec(this.hdg);
+    const tas = this.tas();
+    let vx = v.x * tas, vy = v.y * tas;
+    if (this.state === 'air') {
+      const w = windAt(this.alt);
+      const wv = Geo.vec(w.dir + 180);
+      vx += wv.x * w.spd; vy += wv.y * w.spd;
+    }
+    return { x: vx / 3600, y: vy / 3600 };
+  }
+  gs_kt() { const v = this.vel(); return Math.hypot(v.x, v.y) * 3600; }
+  track() { const v = this.vel(); return Geo.norm(Geo.deg(Math.atan2(v.x, v.y))); }
+
+  // Heading needed to make good a course in the current wind.
+  wca(course) {
+    const w = windAt(this.alt);
+    const xw = w.spd * Math.sin(Geo.rad(w.dir - course));
+    return Geo.deg(Math.asin(Geo.clamp(xw / Math.max(this.tas(), 60), -0.6, 0.6)));
+  }
+  headingFor(course) { return Geo.norm(course + this.wca(course)); }
+
+  // Standard rate (3°/s) limited by 25° of bank at high true airspeed.
+  turnRate() { return Math.min(this.perf.turn, (1091 * Math.tan(Geo.rad(MAX_BANK))) / Math.max(this.tas(), 100)); }
+  turnRadius() { return Geo.turnRadius(this.gs_kt(), this.turnRate()); }
 
   // Position relative to a runway's final approach: along (nm before threshold) and lateral (nm right of course).
   finalGeometry(rwy = this.runway) {
@@ -47,6 +81,7 @@ class Aircraft {
     return Math.min(300, p.max);
   }
 
+  // ---------- main update ----------
   update(dt, game) {
     this.age += dt;
     switch (this.state) {
@@ -70,11 +105,16 @@ class Aircraft {
     }
 
     this.navigate(dt, game);
-    if (this.state !== 'air') return; // landed or went around inside navigate
+    if (this.state !== 'air') return; // landed inside navigate
     this.turn(dt);
     this.adjustSpeed(dt);
     this.adjustAltitude(dt, game);
     this.move(dt);
+
+    if (!this.isArr && !this.calledDeparture && this.alt >= 1000) {
+      this.calledDeparture = true;
+      this.say(game, `Ravenwood Departure, passing ${Math.round(this.alt / 100) * 100} ft climbing ${this.altWords(this.tgtAlt)}, ${this.sid}`);
+    }
 
     this.trailTimer += dt;
     if (this.trailTimer >= 4) {
@@ -93,7 +133,7 @@ class Aircraft {
     if (this.est) {
       const r = this.runway;
       const { along, lateral } = this.finalGeometry();
-      this.tgtHdg = Geo.norm(r.heading - Geo.clamp(lateral * 55, -35, 35));
+      this.tgtHdg = Geo.norm(this.headingFor(r.heading) - Geo.clamp(lateral * 55, -35, 35));
       this.turnDir = null;
       if (along <= 0.05) {
         if (this.alt <= 400) this.land(game);
@@ -109,12 +149,13 @@ class Aircraft {
       const wp = FIXES[this.route[0]];
       const d = Geo.dist(this, wp);
       const brg = Geo.bearing(this, wp);
-      this.tgtHdg = brg;
+      this.tgtHdg = this.headingFor(brg);
+      // Fly-by waypoints: start the turn early so the aircraft rolls out on the next leg.
       let lead = 0.5;
       if (this.route[1]) {
         const next = FIXES[this.route[1]];
         const turn = Math.abs(Geo.diff(brg, Geo.bearing(wp, next)));
-        lead = Geo.clamp(Geo.turnRadius(this.gs_kt(), this.perf.turn) * Math.tan(Geo.rad(Math.min(turn, 120) / 2)), 0.3, 3);
+        lead = Geo.clamp(this.turnRadius() * Math.tan(Geo.rad(Math.min(turn, 120) / 2)), 0.3, 4);
       }
       if (d < lead) {
         this.route.shift();
@@ -138,12 +179,12 @@ class Aircraft {
   checkLocCapture(game) {
     const r = this.runway;
     const { along, lateral } = this.finalGeometry();
-    const theta = Geo.diff(r.heading, this.hdg);
+    const theta = Geo.diff(r.heading, this.track());
     const crossed = this.prevLateral !== null && Math.sign(lateral) !== Math.sign(this.prevLateral);
     this.prevLateral = lateral;
     if (along < 0.5 || along > 30 || Math.abs(theta) > 110) return;
     const toward = (lateral > 0 && theta < 0) || (lateral < 0 && theta > 0);
-    const lead = Geo.turnRadius(this.gs_kt(), this.perf.turn) * (1 - Math.cos(Geo.rad(theta))) + 0.15;
+    const lead = this.turnRadius() * (1 - Math.cos(Geo.rad(theta))) + 0.15;
     if ((Math.abs(lateral) <= lead && (toward || Math.abs(lateral) < 0.15)) || crossed) {
       this.est = true;
       this.mode = 'loc';
@@ -153,32 +194,122 @@ class Aircraft {
     }
   }
 
+  // ---------- holding ----------
+  // Start (or re-plan) a hold. Missing values come from the published hold, else inbound = present track to the fix, right turns.
+  enterHold(fixName, inbound = null, turn = null, legTime = null) {
+    const pub = HOLDS[fixName];
+    const fix = FIXES[fixName];
+    this.est = this.gs = false;
+    this.mode = 'hold';
+    this.hold = {
+      fix: fixName,
+      inbound: inbound ?? pub?.inbound ?? Math.round(Geo.bearing(this, fix) / 5) * 5,
+      turn: turn ?? pub?.turn ?? 'R',
+      legTime,
+      phase: 'toFix', entry: null, timer: 0, laps: 0,
+    };
+    return this.hold;
+  }
+
+  holdLegTime() { return this.hold.legTime ?? HOLD_LEG(this.alt); }
+
+  // Racetrack hold with direct / parallel / teardrop entries.
   flyHold(dt, game) {
     const h = this.hold;
     const fix = FIXES[h.fix];
-    if (h.phase === 'to') {
-      const brg = Geo.bearing(this, fix);
-      this.tgtHdg = brg;
-      if (this.turnDir && Math.abs(Geo.diff(this.hdg, brg)) < 20) this.turnDir = null;
-      if (Geo.dist(this, fix) < 0.5) {
-        if (h.inbound === null) h.inbound = this.hdg;
-        h.phase = 'out';
-        h.timer = 60;
-        this.tgtHdg = Geo.norm(h.inbound + 180);
-        this.turnDir = 'R';
+    const c = h.inbound;
+    const sgn = h.turn === 'R' ? 1 : -1;
+    const aligned = (tgt) => Math.abs(Geo.diff(this.hdg, tgt)) < 3;
+    // Position relative to the inbound course line through the fix.
+    const v = Geo.vec(c);
+    const dx = this.x - fix.x, dy = this.y - fix.y;
+    const before = -(dx * v.x + dy * v.y);
+    const lateral = dx * v.y - dy * v.x;
+
+    switch (h.phase) {
+      case 'toFix': {
+        this.tgtHdg = this.headingFor(Geo.bearing(this, fix));
+        if (Geo.dist(this, fix) < 0.4) {
+          // Entry sectors relative to the inbound course: 110° parallel, 70° teardrop, 180° direct.
+          const d = Geo.diff(c, this.track()) * sgn;
+          h.entry = d <= -70 ? 'parallel' : d >= 110 ? 'teardrop' : 'direct';
+          if (!h.announced) {
+            h.announced = true;
+            this.say(game, `entering the hold at ${h.fix}, ${h.entry} entry, inbound ${Geo.fmtHdg(c)}, ${h.turn === 'R' ? 'right' : 'left'} turns`);
+          }
+          if (h.entry === 'direct') { h.phase = 'outTurn'; }
+          else if (h.entry === 'parallel') { h.phase = 'parOut'; h.timer = this.holdLegTime(); this.turnDir = null; }
+          else { h.phase = 'tearOut'; h.timer = this.holdLegTime(); this.turnDir = null; }
+        }
+        break;
       }
-    } else {
-      // The 1-minute outbound leg is timed once the turn outbound is complete.
-      if (Math.abs(Geo.diff(this.hdg, this.tgtHdg)) < 5) h.timer -= dt;
-      if (h.timer <= 0) { h.phase = 'to'; this.turnDir = 'R'; }
+      case 'outTurn': // turn in the hold direction onto the outbound heading
+        this.tgtHdg = this.headingFor(c + 180);
+        this.turnDir = h.turn;
+        if (aligned(this.tgtHdg)) { h.phase = 'outbound'; h.timer = this.holdLegTime(); this.turnDir = null; }
+        break;
+      case 'outbound':
+        this.tgtHdg = this.headingFor(c + 180);
+        h.timer -= dt;
+        if (h.timer <= 0) { h.phase = 'inTurn'; this.turnDir = h.turn; }
+        break;
+      case 'inTurn': // turn in the hold direction back towards the inbound course
+        this.tgtHdg = Geo.norm(c);
+        this.turnDir = h.turn;
+        if (Math.abs(Geo.diff(this.hdg, c)) < 30) { h.phase = 'inbound'; this.turnDir = null; }
+        break;
+      case 'inbound':
+        this.tgtHdg = Geo.norm(this.headingFor(c) - Geo.clamp(lateral * 45, -45, 45));
+        if (before <= 0.1) { h.phase = 'outTurn'; h.laps++; }
+        break;
+      case 'parOut': // parallel entry: outbound on the non-holding side
+        this.tgtHdg = this.headingFor(c + 180);
+        if (aligned(this.tgtHdg)) h.timer -= dt;
+        if (h.timer <= 0) { h.phase = 'parBack'; this.turnDir = h.turn === 'R' ? 'L' : 'R'; }
+        break;
+      case 'parBack': { // turn back through the holding side, direct to the fix
+        const brg = this.headingFor(Geo.bearing(this, fix));
+        this.tgtHdg = brg;
+        if (this.turnDir && Math.abs(Geo.diff(this.hdg, brg)) < 20) this.turnDir = null;
+        if (Geo.dist(this, fix) < 0.4) { h.phase = 'outTurn'; h.laps++; }
+        break;
+      }
+      case 'tearOut': // teardrop entry: 30° offset onto the holding side
+        this.tgtHdg = this.headingFor(c + 180 - sgn * 30);
+        if (aligned(this.tgtHdg)) h.timer -= dt;
+        if (h.timer <= 0) { h.phase = 'inTurn'; this.turnDir = h.turn; }
+        break;
     }
   }
 
+  // Published-style racetrack shape for drawing.
+  static racetrack(fixName, inbound, turn, alt = 8000) {
+    const fix = FIXES[fixName];
+    const sgn = turn === 'R' ? 1 : -1;
+    const tas = HOLD_SPEED(alt) * (1 + (alt / 1000) * 0.018);
+    const rate = Math.min(3, (1091 * Math.tan(Geo.rad(MAX_BANK))) / tas);
+    const r = Geo.turnRadius(tas, rate);
+    const leg = (tas / 3600) * HOLD_LEG(alt);
+    const pts = [];
+    const arc = (centre, from) => {
+      for (let a = 0; a <= 180; a += 15) pts.push(Geo.offset(centre, from + sgn * a, r));
+    };
+    const c1 = Geo.offset(fix, inbound + sgn * 90, r);
+    arc(c1, Geo.bearing(c1, fix));
+    const outEnd = Geo.offset(Geo.offset(fix, inbound + sgn * 90, 2 * r), inbound + 180, leg);
+    const c2 = Geo.offset(c1, inbound + 180, leg);
+    pts.push(outEnd);
+    arc(c2, Geo.bearing(c2, outEnd));
+    pts.push({ x: fix.x, y: fix.y });
+    return pts;
+  }
+
+  // ---------- control laws ----------
   turn(dt) {
     let d = Geo.diff(this.hdg, this.tgtHdg);
     if (this.turnDir === 'R' && d < 0 && Math.abs(d) > 2) d += 360;
     if (this.turnDir === 'L' && d > 0 && Math.abs(d) > 2) d -= 360;
-    const step = this.perf.turn * dt;
+    const step = this.turnRate() * dt;
     if (Math.abs(d) <= step) {
       this.hdg = this.tgtHdg;
       if (this.mode !== 'hold') this.turnDir = null;
@@ -191,6 +322,7 @@ class Aircraft {
     let target = this.tgtSpd ?? this.autoSpeed();
     // Pilots slow to approach speed inside 5 nm regardless of assigned speed.
     if (this.est && this.finalGeometry().along < 5) target = this.perf.vapp;
+    if (this.mode === 'hold') target = Math.min(target, HOLD_SPEED(this.alt));
     if (this.alt < 10000 && !this.handedOff) target = Math.min(target, 250);
     target = Geo.clamp(target, this.perf.vapp, this.perf.max);
     const d = target - this.spd;
@@ -219,14 +351,10 @@ class Aircraft {
     this.alt = Math.abs(d) <= rate ? this.tgtAlt : this.alt + Math.sign(d) * rate;
   }
 
-  // Ground speed: IAS corrected roughly for altitude (no wind).
-  gs_kt() { return this.spd * (1 + (this.alt / 1000) * 0.018); }
-
   move(dt) {
-    const nm = (this.gs_kt() / 3600) * dt;
-    const v = Geo.vec(this.hdg);
-    this.x += v.x * nm;
-    this.y += v.y * nm;
+    const v = this.vel();
+    this.x += v.x * dt;
+    this.y += v.y * dt;
   }
 
   land(game) {
@@ -251,29 +379,50 @@ class Aircraft {
     game.onGoAround(this);
   }
 
-  // Path drawn on the scope: remaining waypoints and, for arrivals, the runway.
-  displayPath() {
-    const pts = [];
-    if (this.state === 'ground' || this.state === 'lineup') {
-      pts.push(this.runway.thr, this.runway.opp);
-      for (const n of this.route) pts.push(FIXES[n]);
-      return pts;
+  // ---------- path prediction ----------
+  // Simulate a silent copy of this aircraft forward and record where it goes.
+  // Returns { pts, vectored }: pts follow the real curved flight path; when vectored
+  // (flying a heading with no clearance to rejoin) only ~2 minutes are predicted.
+  predictPath() {
+    const g = Object.assign(Object.create(Aircraft.prototype), this, {
+      route: this.route.slice(),
+      hold: this.hold ? { ...this.hold, announced: true } : null,
+      trail: [], endOfRouteWarned: true, calledDeparture: true,
+    });
+    if (g.state === 'ground' || g.state === 'lineup') {
+      Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.thr.x, y: g.runway.thr.y, hdg: g.runway.heading });
+      if (g.tgtAlt < SID_TOP) g.tgtAlt = SID_TOP;
     }
-    pts.push({ x: this.x, y: this.y });
-    if (this.est) { pts.push(this.runway.thr); return pts; }
-    if (this.mode === 'hold') { pts.push(FIXES[this.hold.fix]); return pts; }
-    // When vectored off the route, the remaining route is still shown (first leg dashed by the scope).
-    for (const n of this.route) pts.push(FIXES[n]);
-    if (this.isArr && this.ils && !this.route.length) {
-      const [, , faf] = APPROACHES[this.rwy];
-      pts.push(FIXES[faf]);
+    const vectored = g.state === 'air' && g.mode === 'heading' && !g.ils;
+    const limit = vectored ? 120 : 1200;
+    const dt = 2;
+    const pts = [{ x: g.x, y: g.y }];
+    const startLaps = g.hold ? g.hold.laps : 0;
+    let t = 0, straight = 0;
+    while (t < limit && g.state !== 'gone') {
+      g.update(dt, SILENT_GAME);
+      t += dt;
+      pts.push({ x: g.x, y: g.y });
+      if (g.state === 'landed') break;
+      if (g.mode === 'hold' && ((g.hold.laps > startLaps && t >= 200) || g.hold.laps > startLaps + 1)) break; // one full racetrack is enough
+      // Once a non-vectored aircraft runs out of route and is just flying straight, stop after a short stub.
+      if (!vectored && g.state === 'air' && g.mode === 'heading' && !g.ils && Math.abs(Geo.diff(g.hdg, g.tgtHdg)) < 1) {
+        if ((straight += dt) > 40) break;
+      }
+      if (Math.hypot(g.x, g.y) > AIRPORT.radarRange + 5) break;
     }
-    if (this.isArr && (this.route.length || this.ils)) pts.push(this.runway.thr);
-    return pts;
+    // Arrivals whose route ends before the runway: show the remaining way in.
+    const tail = [];
+    if (this.isArr && g.state === 'air' && !vectored && !g.ils) tail.push(this.runway.thr);
+    return { pts, vectored, tail };
   }
 
+  // ---------- text helpers ----------
   altText(alt = this.alt) {
     if (alt >= AIRPORT.transAlt + 500) return 'F' + String(Math.round(alt / 100)).padStart(3, '0');
     return 'A' + String(Math.round(alt / 100)).padStart(3, '0');
+  }
+  altWords(alt) {
+    return alt >= AIRPORT.transAlt + 500 ? `flight level ${Math.round(alt / 100)}` : `${alt} ft`;
   }
 }

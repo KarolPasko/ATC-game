@@ -24,7 +24,8 @@ python3 -m http.server 8000   # then open http://localhost:8000
 | Action | Effect |
 | --- | --- |
 | Click aircraft / strip | Select it |
-| Click a waypoint (with an aircraft selected) | Direct to that waypoint |
+| **Press and hold** a waypoint (with an aircraft selected) | Direct to that waypoint, then rejoin the route |
+| Right-click a waypoint | Menu: direct, hold as published, hold with left/right turns, approach via that fix |
 | Right-click the map | Give the selected aircraft a heading toward that point |
 | Drag / wheel | Pan / zoom |
 | `Tab` / `Esc` | Cycle through aircraft / deselect |
@@ -45,7 +46,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `dct NORAX` | Direct to a waypoint, then continue the route |
 | `i 26L` / `ils 26L` | Cleared ILS: intercept the localizer from vectors |
 | `app 26R` | Cleared for the full approach: IAF → IF → FAF, descending via the published altitudes, then ILS |
-| `hold [fix]` | Hold at a fix |
+| `hold [fix] [inbound] [L\|R] [1.5M]` | Hold as published, or with your own inbound course, turns and leg time |
 | `res` | Resume own navigation on the route |
 | `ga` | Go around |
 | `ho` | Hand off to the next sector |
@@ -55,10 +56,22 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 System commands: `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
 `.procs`, `.voice`, `.help`, `.restart`.
 
+## Realism
+
+- **Predicted flight path**: the line ahead of each aircraft comes from simulating it forward, so it shows the real
+  curved turns, fly-by waypoints, localizer intercepts and holding patterns. A dashed line means the aircraft is on a heading.
+- **Wind** (shown in the ATIS) drifts aircraft that are flying a heading. On routes, in holds and on the localizer, pilots correct for it.
+- **Turns** are standard rate (3°/s) but limited to 25° of bank, so fast aircraft turn wider.
+- **Holds** use direct, parallel and teardrop entries, 1-minute legs up to FL140 (1.5 min above) and holding speed
+  (230/240/265 kt). Published holds are marked with a dot under the fix.
+- **Wake turbulence** on final: 4 nm behind a heavy for a heavy, 5 nm for a medium.
+- 250 kt below FL100, transition altitude 6000 ft, and pilots set QNH when descending below it.
+- Departures check in after take-off. Arrivals report the end of their route if they haven't been cleared for an approach.
+
 ## Scoring
 
 Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 ·
-separation loss −50 · departure leaving without a handoff −50 · arrival lost −100.
+separation loss −50 · wake spacing −30 · departure leaving without a handoff −50 · arrival lost −100.
 
 ## Code layout
 

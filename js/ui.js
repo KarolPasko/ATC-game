@@ -102,6 +102,7 @@ class UI {
     $('chk-procs').checked = g.radar.showProcs;
     $('chk-voice').checked = g.voice;
     $('active-rwys').textContent = g.activeRunways().join(' / ');
+    $('atis').textContent = `${g.atis} · ${g.windText()} · Q${AIRPORT.qnh}`;
     $('cmd-target').textContent = g.selected ? g.selected.cs : '—';
     this.renderStrips();
     this.renderCard();
@@ -118,7 +119,7 @@ class UI {
     else if (ac.state === 'landed') status = 'LANDED';
     else if (ac.handedOff) status = 'HO';
     else if (ac.est) status = `LOC ${ac.rwy}`;
-    else if (ac.mode === 'hold') status = `HOLD`;
+    else if (ac.mode === 'hold') status = `HOLD ${ac.hold.fix}`;
     else if (ac.mode === 'heading') status = `H${Geo.fmtHdg(ac.tgtHdg)}`;
     else status = ac.route[0] || '';
     const proc = ac.isArr ? ac.star : ac.sid;
@@ -154,6 +155,7 @@ class UI {
         quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
       } else if (ac.state === 'air') {
         quick = btn('Heading…', 'h ') + btn('Alt…', 'a ') + btn('Speed…', 's ') + btn('Direct…', 'dct ');
+        quick += btn('Hold…', 'hold ');
         if (ac.isArr) quick += btn(`ILS ${ac.rwy}`, `i ${ac.rwy}`) + btn(`APP ${ac.rwy}`, `app ${ac.rwy}`) + btn('Go around', 'ga');
         else quick += btn('FL240', 'a FL240') + (!ac.handedOff ? btn('Hand off', 'ho') : '');
         if (ac.mode !== 'route' && ac.route.length && !ac.est) quick += btn('Resume', 'res');

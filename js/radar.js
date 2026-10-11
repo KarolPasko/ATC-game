@@ -18,7 +18,10 @@ const COLORS = {
   stca: '#ffd84a',
   conflict: '#ff4a4a',
   ground: '#b9c7d2',
+  vor: '#8fd3c4',
 };
+
+const LONG_PRESS_MS = 550;
 
 class Radar {
   constructor(canvas, game) {
@@ -59,31 +62,42 @@ class Radar {
 
   // ---------- input ----------
   bindMouse() {
-    const c = this.c;
-    c.addEventListener('mousedown', (e) => {
+    const c = this.c, g = this.game;
+    c.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      this.mouse.down = true; this.mouse.dragged = false;
-      this.mouse.sx = e.offsetX; this.mouse.sy = e.offsetY;
+      this.closeMenu();
+      c.setPointerCapture(e.pointerId);
+      Object.assign(this.mouse, { down: true, dragged: false, sx: e.offsetX, sy: e.offsetY, x: e.offsetX, y: e.offsetY });
+      // Press-and-hold a waypoint to send the selected aircraft there.
+      const ac = this.hitAircraft(e.offsetX, e.offsetY);
+      const fix = !ac && g.selected && this.hitFix(e.offsetX, e.offsetY);
+      this.press = fix ? { fix, ac: g.selected, t0: performance.now(), done: false } : null;
     });
-    window.addEventListener('mouseup', (e) => {
+    c.addEventListener('pointerup', (e) => {
       if (e.button !== 0 || !this.mouse.down) return;
       this.mouse.down = false;
-      if (!this.mouse.dragged && e.target === c) this.click(e.offsetX, e.offsetY);
+      if (!this.mouse.dragged) {
+        if (this.press && !this.press.done) {
+          if (!this.hinted) { this.hinted = true; g.log(`Press and hold ${this.press.fix.name} to send ${this.press.ac.cs} there (right-click it for hold options).`, 'sys'); }
+        } else if (!this.press) this.click(e.offsetX, e.offsetY);
+      }
+      this.press = null;
     });
-    c.addEventListener('mousemove', (e) => {
+    c.addEventListener('pointermove', (e) => {
       this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
       if (this.mouse.down) {
         const dx = e.offsetX - this.mouse.sx, dy = e.offsetY - this.mouse.sy;
-        if (this.mouse.dragged || Math.hypot(dx, dy) > 4) {
+        if (this.mouse.dragged || Math.hypot(dx, dy) > 5) {
           this.mouse.dragged = true;
+          this.press = null;
           this.view.cx -= dx / this.view.scale;
           this.view.cy += dy / this.view.scale;
           this.mouse.sx = e.offsetX; this.mouse.sy = e.offsetY;
         }
       }
-      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || (this.game.selected && this.hitFix(e.offsetX, e.offsetY)) ? 'pointer' : 'crosshair';
+      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || (g.selected && this.hitFix(e.offsetX, e.offsetY)) ? 'pointer' : 'crosshair';
     });
-    c.addEventListener('mouseleave', () => { this.mouse.x = -1; });
+    c.addEventListener('pointerleave', () => { if (!this.mouse.down) this.mouse.x = -1; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const before = this.toWorld(e.offsetX, e.offsetY);
@@ -92,25 +106,59 @@ class Radar {
       this.view.cx += before.x - after.x;
       this.view.cy += before.y - after.y;
     }, { passive: false });
-    // Right-click: give the selected aircraft a heading towards the clicked point.
+    // Right-click: waypoint menu (direct / hold / approach), or a heading towards the clicked point.
     c.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const ac = this.game.selected;
-      if (!ac || !ac.airborne) return;
+      this.press = null;
+      const ac = g.selected;
+      if (!ac || ac.state === 'gone') return;
       const fix = this.hitFix(e.offsetX, e.offsetY);
-      if (fix) return this.game.commands.execute(`${ac.cs} dct ${fix.name}`);
+      if (fix) return this.openMenu(fix, ac, e.offsetX, e.offsetY);
+      if (!ac.airborne) return;
       const p = this.toWorld(e.offsetX, e.offsetY);
-      this.game.commands.execute(`${ac.cs} h ${Geo.fmtHdg(Geo.bearing(ac, p))}`);
+      g.commands.execute(`${ac.cs} h ${Geo.fmtHdg(Geo.bearing(ac, p))}`);
     });
+    this.menu = document.getElementById('ctxmenu');
+    this.menu.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cmd]');
+      if (b && b.dataset.cmd) g.commands.execute(b.dataset.cmd);
+      this.closeMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenu(); });
   }
 
+  openMenu(fix, ac, sx, sy) {
+    const items = [];
+    const cs = ac.cs;
+    const air = ac.airborne;
+    items.push([`Direct ${fix.name}`, `${cs} dct ${fix.name}`]);
+    if (air) {
+      const pub = HOLDS[fix.name];
+      const inb = Math.round(Geo.bearing(ac, fix) / 5) * 5 || 360;
+      if (pub) items.push([`Hold as published · ${Geo.fmtHdg(pub.inbound)}° ${pub.turn === 'R' ? 'right' : 'left'}`, `${cs} hold ${fix.name}`]);
+      items.push([`Hold · inbound ${Geo.fmtHdg(inb)}° · right turns`, `${cs} hold ${fix.name} ${Geo.fmtHdg(inb)} R`]);
+      items.push([`Hold · inbound ${Geo.fmtHdg(inb)}° · left turns`, `${cs} hold ${fix.name} ${Geo.fmtHdg(inb)} L`]);
+      if (ac.isArr) {
+        for (const [rwy, fixes] of Object.entries(APPROACHES)) {
+          if (fixes.slice(0, 2).includes(fix.name)) items.push([`Cleared approach ${rwy} via ${fix.name}`, `${cs} dct ${fix.name} app ${rwy}`]);
+        }
+      }
+    }
+    const info = HOLDS[fix.name] ? `min hold ${ac.altText(HOLDS[fix.name].minAlt)}` : fix.alt ? `at ${ac.altText(fix.alt)}` : fix.type.toUpperCase();
+    this.menu.innerHTML = `<div class="mh">${esc(cs)} → ${esc(fix.name)} <span>${esc(info)}</span></div>` +
+      items.map(([l, c]) => `<button data-cmd="${esc(c)}">${esc(l)}</button>`).join('') +
+      '<button data-cmd="" class="cancel">Cancel</button>';
+    this.menu.hidden = false;
+    const w = this.menu.offsetWidth, h = this.menu.offsetHeight;
+    this.menu.style.left = Math.min(sx + 8, this.w - w - 8) + 'px';
+    this.menu.style.top = Math.min(sy + 8, this.h - h - 8) + 'px';
+  }
+
+  closeMenu() { if (this.menu) this.menu.hidden = true; }
+
   click(sx, sy) {
-    const g = this.game;
     const ac = this.hitAircraft(sx, sy);
-    if (ac) return g.select(ac);
-    const fix = this.hitFix(sx, sy);
-    if (fix && g.selected && g.selected.state !== 'gone') return g.commands.execute(`${g.selected.cs} dct ${fix.name}`);
-    g.select(null);
+    this.game.select(ac || null);
   }
 
   hitAircraft(sx, sy) {
@@ -144,6 +192,7 @@ class Radar {
     this.drawCentrelines();
     this.drawRunways();
     this.drawFixes();
+    this.drawHolds();
 
     const sel = g.selected;
     if (this.routes !== 'off') {
@@ -154,6 +203,7 @@ class Radar {
       if (ac.state === 'ground' || ac.state === 'lineup') this.drawGround(ac);
       else if (ac.state !== 'gone') this.drawAircraft(ac);
     }
+    this.drawPress();
     this.drawCursorInfo();
     this.drawScaleBar();
     if (g.paused) {
@@ -258,13 +308,21 @@ class Radar {
       if (p.x < -40 || p.y < -40 || p.x > this.w + 40 || p.y > this.h + 40) continue;
       const minor = f.type === 'if' || f.type === 'faf' || f.type === 'sid';
       if (minor && (s < 12 || !active.has(f.name))) continue;
-      const col = f.type === 'entry' ? COLORS.entry : f.type === 'exit' ? COLORS.exit : f.type === 'iaf' ? COLORS.iaf : COLORS.fix;
+      const col = f.type === 'entry' ? COLORS.entry : f.type === 'exit' ? COLORS.exit : f.type === 'iaf' ? COLORS.iaf : f.type === 'vor' ? COLORS.vor : COLORS.fix;
       const sz = minor ? 3 : 4.5;
       ctx.strokeStyle = f === hover ? '#ffffff' : col;
       ctx.lineWidth = f === hover ? 2 : 1;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y - sz); ctx.lineTo(p.x + sz, p.y + sz * 0.8); ctx.lineTo(p.x - sz, p.y + sz * 0.8); ctx.closePath();
+      if (f.type === 'vor') {
+        // VOR/DME: hexagon in a square with a centre dot
+        for (let i = 0; i < 6; i++) { const a = (Math.PI / 3) * i; const q = [p.x + Math.cos(a) * 6, p.y + Math.sin(a) * 6]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
+        ctx.closePath(); ctx.rect(p.x - 6, p.y - 5.2, 12, 10.4);
+        ctx.fillStyle = col; ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+      } else {
+        ctx.moveTo(p.x, p.y - sz); ctx.lineTo(p.x + sz, p.y + sz * 0.8); ctx.lineTo(p.x - sz, p.y + sz * 0.8); ctx.closePath();
+      }
       ctx.stroke();
+      if (HOLDS[f.name] && s >= 5) { ctx.fillStyle = col; ctx.fillRect(p.x - 1, p.y + sz + 2, 2, 2); }
       ctx.fillStyle = f === hover ? '#ffffff' : COLORS.fixLabel;
       let label = f.name;
       if (f.alt && s >= 7) label += ` A${String(f.alt / 100).padStart(3, '0')}`;
@@ -274,21 +332,68 @@ class Radar {
 
   drawRoute(ac, selected) {
     if (ac.state === 'gone' || ac.state === 'landed' || ac.handedOff) return;
-    const pts = ac.displayPath();
-    if (pts.length < 2) return;
+    const now = performance.now();
+    if (!ac._pred || now - ac._predT > 400) { ac._pred = ac.predictPath(); ac._predT = now; }
+    const { pts, vectored, tail } = ac._pred;
     const col = ac.isArr ? COLORS.arr : COLORS.dep;
     const w = selected ? 2.2 : 1.2;
     const alpha = selected ? 1 : 0.55;
-    const vectored = ac.state === 'air' && ac.mode !== 'route' && !ac.est;
+    if (ac.state === 'ground' || ac.state === 'lineup') this.polyline([ac.runway.thr, ac.runway.opp], col, w, [], alpha);
     if (vectored) {
-      this.polyline(pts.slice(0, 2), col, w, [5, 5], alpha * 0.8);
-      this.polyline(pts.slice(1), col, w, [], alpha * 0.7);
-    } else this.polyline(pts, col, w, [], alpha);
+      // Curved prediction of the turn onto the assigned heading, then the route it will rejoin.
+      this.polyline(pts, col, w, [6, 4], alpha);
+      if (ac.route.length) {
+        const rest = ac.route.map((n) => FIXES[n]);
+        if (ac.isArr) rest.push(ac.runway.thr);
+        this.polyline(rest, col, w * 0.8, [], alpha * 0.45);
+      }
+    } else {
+      this.polyline(pts.concat(tail), col, w, [], alpha);
+    }
+    if (ac.mode === 'hold' && ac.hold) {
+      const h = ac.hold;
+      this.polyline(Aircraft.racetrack(h.fix, h.inbound, h.turn, ac.alt), col, 1, [3, 4], alpha * 0.7);
+    }
     if (selected) {
-      // dots on waypoints
       const ctx = this.ctx;
       ctx.fillStyle = col;
-      for (const p of pts.slice(1)) { const s = this.toScreen(p); ctx.beginPath(); ctx.arc(s.x, s.y, 2.5, 0, Math.PI * 2); ctx.fill(); }
+      for (const n of ac.route) { const s = this.toScreen(FIXES[n]); ctx.beginPath(); ctx.arc(s.x, s.y, 2.5, 0, Math.PI * 2); ctx.fill(); }
+    }
+  }
+
+  drawHolds() {
+    const g = this.game;
+    const hover = g.selected && this.mouse.x >= 0 ? this.hitFix(this.mouse.x, this.mouse.y) : null;
+    for (const [name, h] of Object.entries(HOLDS)) {
+      if (!this.showProcs && (!hover || hover.name !== name)) continue;
+      this.polyline(Aircraft.racetrack(name, h.inbound, h.turn, h.minAlt), '#9fb0c0', 1, [2, 3], 0.45);
+    }
+  }
+
+  // Ring that fills while a waypoint is pressed; completes the direct-to.
+  drawPress() {
+    const pr = this.press;
+    if (!pr || pr.done) {
+      if (this.flash && performance.now() - this.flash.t < 600) {
+        const p = this.toScreen(this.flash.fix);
+        const k = (performance.now() - this.flash.t) / 600;
+        this.ctx.strokeStyle = `rgba(95,240,255,${1 - k})`;
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath(); this.ctx.arc(p.x, p.y, 12 + k * 14, 0, Math.PI * 2); this.ctx.stroke();
+      }
+      return;
+    }
+    const frac = (performance.now() - pr.t0) / LONG_PRESS_MS;
+    const p = this.toScreen(pr.fix);
+    const ctx = this.ctx;
+    ctx.strokeStyle = 'rgba(95,240,255,0.25)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 13, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = COLORS.tagSel;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 13, -Math.PI / 2, -Math.PI / 2 + Math.min(1, frac) * Math.PI * 2); ctx.stroke();
+    if (frac >= 1) {
+      pr.done = true;
+      this.flash = { fix: pr.fix, t: performance.now() };
+      if (pr.ac.state !== 'gone') this.game.commands.execute(`${pr.ac.cs} dct ${pr.fix.name}`);
     }
   }
 
@@ -316,7 +421,7 @@ class Radar {
     ctx.globalAlpha = 1;
 
     // 1-minute speed vector
-    const v = this.toScreen(Geo.offset(ac, ac.hdg, ac.gs_kt() / 60));
+    const v = this.toScreen(Geo.offset(ac, ac.track(), ac.gs_kt() / 60));
     ctx.strokeStyle = col; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(v.x, v.y); ctx.stroke();
 
@@ -346,7 +451,7 @@ class Radar {
     let info;
     if (ac.state === 'landed') info = 'LANDED';
     else if (ac.est) info = `LOC${ac.rwy}`;
-    else if (ac.mode === 'hold') info = `HLD ${ac.hold.fix}`;
+    else if (ac.mode === 'hold') info = `HLD ${ac.hold.fix} ${ac.hold.turn}`;
     else if (ac.mode === 'heading') info = `H${Geo.fmtHdg(ac.tgtHdg)}${ac.ils ? ' I' + ac.rwy : ''}`;
     else info = (ac.route[0] || '') + (ac.app ? ' A' + ac.rwy : ac.ils ? ' I' + ac.rwy : '');
     const spd = String(Math.round(ac.gs_kt())).padStart(3, '0');

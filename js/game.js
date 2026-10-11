@@ -32,8 +32,14 @@ class Game {
     this.conflictPairs = new Set();
     this.nextArr = 5;
     this.nextDep = 15;
+    this.atis = 'K';
+    AIRPORT.qnh = 1003 + Math.floor(Math.random() * 25);
+    WIND.dir = this.config === '26' ? 240 + Math.floor(Math.random() * 30) : 60 + Math.floor(Math.random() * 30);
+    WIND.spd = 6 + Math.floor(Math.random() * 12);
+    this.windBase = { ...WIND };
     this.ui.clearLog();
     this.log(`Welcome to ${AIRPORT.name} (${AIRPORT.icao}). Runways ${this.activeRunways().join(' & ')} in use.`, 'sys');
+    this.log(`Information ${this.atis}: wind ${this.windText()}, QNH ${AIRPORT.qnh}, transition altitude ${AIRPORT.transAlt} ft.`, 'sys');
     this.log('Click an aircraft (or type its callsign) and enter commands below. Type .help for the command list.', 'sys');
     this.spawnArrival();
     this.spawnArrival();
@@ -56,8 +62,13 @@ class Game {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  windText() { return `${Geo.fmtHdg(Math.round(WIND.dir / 10) * 10)}/${String(Math.round(WIND.spd)).padStart(2, '0')}KT`; }
+
   step(dt) {
     this.time += dt;
+    // Wind wanders slowly around its base value.
+    WIND.dir = this.windBase.dir + Math.sin(this.time / 300) * 10;
+    WIND.spd = Math.max(0, this.windBase.spd + Math.sin(this.time / 170) * 3);
     for (const ac of this.aircraft) ac.update(dt, this);
     this.layoutGround();
     this.checkBoundaries();
@@ -225,7 +236,30 @@ class Game {
         }
       }
     }
+    this.checkWake(air, now);
     this.conflictPairs = now;
+  }
+
+  // Wake turbulence spacing on final: 4 nm behind a heavy for a heavy, 5 nm for a medium.
+  checkWake(air, now) {
+    const finals = air.filter((a) => a.est);
+    for (const a of finals) {
+      for (const b of finals) {
+        if (a === b || a.rwy !== b.rwy || a.wake !== 'H') continue;
+        const la = a.finalGeometry().along, lb = b.finalGeometry().along;
+        if (lb <= la) continue; // b must be behind a
+        const need = b.wake === 'H' ? 4 : 5;
+        const d = Geo.dist(a, b);
+        if (d >= need) continue;
+        b.conflict = Math.max(b.conflict, 1);
+        const key = `wake|${a.cs}|${b.cs}`;
+        now.add(key);
+        if (!this.conflictPairs.has(key)) {
+          this.stats.losses++;
+          this.addScore(-30, `Wake turbulence: ${b.cs} is ${d.toFixed(1)} nm behind heavy ${a.cs} (need ${need} nm)`);
+        }
+      }
+    }
   }
 
   exempt(a, b) {
@@ -240,7 +274,7 @@ class Game {
     if (Geo.dist(a, b) > 3 + ((a.gs_kt() + b.gs_kt()) / 3600) * 90) return false;
     if (Math.abs(a.alt - b.alt) > 950 + ((a.perf.climb + b.perf.desc) / 60) * 90 * 1.6) return false;
     const proj = (ac, t) => {
-      const p = Geo.offset(ac, ac.hdg, (ac.gs_kt() / 3600) * t);
+      const p = Geo.offset(ac, ac.track(), (ac.gs_kt() / 3600) * t);
       const rate = ac.tgtAlt > ac.alt ? ac.perf.climb : -ac.perf.desc;
       const alt = ac.gs ? ac.alt - (ac.gs_kt() / 3600) * t * GS_FT_PER_NM
         : rate > 0 ? Math.min(ac.tgtAlt, ac.alt + (rate / 60) * t) : Math.max(ac.tgtAlt, ac.alt + (rate / 60) * t);
@@ -297,6 +331,8 @@ class Game {
   setConfig(c) {
     if (c === this.config) return;
     this.config = c;
+    this.atis = String.fromCharCode(((this.atis.charCodeAt(0) - 65 + 1) % 26) + 65);
+    this.windBase.dir = Geo.norm(this.windBase.dir + 180);
     // Waiting departures move to the new runway direction and pick a matching SID.
     for (const a of this.aircraft) {
       if (a.state !== 'ground' && a.state !== 'lineup') continue;
@@ -305,7 +341,7 @@ class Game {
       Object.assign(a, { state: 'ground', rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(), hdg: RUNWAYS[sid.rwy].heading });
       a.tgtHdg = a.hdg;
     }
-    this.log(`Runway configuration changed: ${this.activeRunways().join(' & ')} in use. New arrivals will use the new STARs; vector existing traffic as needed.`, 'sys');
+    this.log(`Runway configuration changed: ${this.activeRunways().join(' & ')} in use, information ${this.atis}, wind ${this.windText()}. New arrivals will use the new STARs; vector existing traffic as needed.`, 'sys');
     this.ui.update();
   }
 }

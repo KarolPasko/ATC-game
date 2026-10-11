@@ -15,6 +15,7 @@
     <div class="item"><label>Score</label><span id="score">0</span></div>
     <div class="item stats" id="stats"></div>
     <div class="item"><label>RWY</label><span id="active-rwys"></span></div>
+    <div class="item"><label>ATIS</label><span id="atis"></span></div>
     <div class="spacer"></div>
     <div class="controls">
       <select id="sel-config" title="Runway configuration">
@@ -42,10 +43,11 @@
   <main>
     <section id="scope">
       <canvas id="radar"></canvas>
+      <div id="ctxmenu" hidden></div>
       <div id="legend">
         <span><i class="ln dep"></i>Departure route</span>
         <span><i class="ln arr"></i>Arrival route</span>
-        <span>Click aircraft = select · click fix = direct · right-click = heading · drag = pan · wheel = zoom</span>
+        <span>Click aircraft = select · press &amp; hold fix = direct · right-click fix = hold/approach menu · right-click map = heading · drag = pan · wheel = zoom</span>
       </div>
     </section>
     <aside id="side">
@@ -72,13 +74,26 @@
         descended and cleared for an approach. <b>Departures</b> wait at the holding point: give them their clearance
         (<code>caf</code>), clear them for take-off (<code>cto</code>), climb them, and hand them off (<code>ho</code>)
         once they're above FL100 and 20 nm out. They follow their SID (blue route).</p>
-      <p>Keep <b>3 nm or 1000 ft</b> between airborne aircraft. Yellow tags = predicted conflict, red = separation lost.</p>
+      <p>Keep <b>3 nm or 1000 ft</b> between airborne aircraft, and on final keep <b>4 nm</b> behind a heavy (H) for another
+        heavy and <b>5 nm</b> for a medium. Yellow tags = predicted conflict or wake spacing, red = separation lost.</p>
+      <h2>Mouse</h2>
+      <p>Click an aircraft to select it. <b>Press and hold a waypoint</b> to send the selected aircraft direct to it (a ring fills
+        around the fix). <b>Right-click a waypoint</b> for direct, holding (as published or with your own turns) and
+        approach options. Right-click empty map to turn the aircraft towards that point. The coloured line ahead of each aircraft
+        is its <b>predicted flight path</b>, including turns, holds and the localizer intercept; a dashed line means it is on a
+        heading (vectors).</p>
+      <h2>Realism</h2>
+      <p>Wind drifts aircraft that are flying a heading; on routes and the localizer the pilots correct for it. Turns are standard
+        rate (3°/s) limited to 25° of bank, so fast aircraft turn wider. Holds are flown with proper direct, parallel and
+        teardrop entries, 1-minute legs up to FL140 (1.5 min above), at holding speed (230 kt). Speed is limited to 250 kt below FL100.
+        Transition altitude is 6000 ft; pilots set QNH when descending below it. Published holds are marked with a dot under
+        the fix; hover a fix with an aircraft selected, or tick <i>Procs</i>, to see them.</p>
       <p>Type a callsign (or just its digits) followed by commands, or select an aircraft and type commands only.
         Several commands can go on one line: <code>BAW123 tl 180 d 4000 s 220</code>.</p>
       <h2>Commands</h2>
       <table id="help-table"></table>
       <h2>Scoring</h2>
-      <p>Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 · separation loss −50 ·
+      <p>Landing +100 · good handoff +100 (early +50/+20) · go-around −10 · runway not clear −50 · separation loss −50 · wake spacing −30 ·
         departure leaving without handoff −50 · arrival lost −100.</p>
       <p class="tip">Tip: arrivals descend on their own only after <code>app RWY</code>. With <code>i RWY</code> you must vector
         them onto the localizer (≈30° intercept) and descend them to 3000–4000 ft first — the glideslope is captured from below.</p>

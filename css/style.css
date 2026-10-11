@@ -34,7 +34,14 @@ button.on { background: #234452; border-color: var(--cyan); color: var(--cyan); 
 /* ---- main ---- */
 main { display: grid; grid-template-columns: 1fr 330px; min-height: 0; }
 #scope { position: relative; min-height: 0; }
-#radar { width: 100%; height: 100%; display: block; }
+#radar { width: 100%; height: 100%; display: block; touch-action: none; }
+#ctxmenu { position: absolute; z-index: 5; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; padding: 4px; display: flex; flex-direction: column; min-width: 240px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
+#ctxmenu[hidden] { display: none; }
+#ctxmenu .mh { color: var(--cyan); padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 3px; font-weight: 600; }
+#ctxmenu .mh span { color: var(--dim); font-weight: 400; margin-left: 6px; }
+#ctxmenu button { text-align: left; border: none; background: transparent; padding: 6px 8px; }
+#ctxmenu button:hover, #ctxmenu button:focus-visible { background: #234452; color: var(--cyan); }
+#ctxmenu button.cancel { color: var(--dim); }
 #legend { position: absolute; bottom: 34px; left: 12px; display: flex; gap: 14px; color: var(--dim); font-size: 10px; pointer-events: none; flex-wrap: wrap; }
 .ln { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin-right: 5px; }
 .ln.dep { background: var(--dep); } .ln.arr { background: var(--arr); }
