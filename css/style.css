@@ -42,6 +42,13 @@ main { display: grid; grid-template-columns: 1fr 330px; min-height: 0; }
 #ctxmenu button { text-align: left; border: none; background: transparent; padding: 6px 8px; }
 #ctxmenu button:hover, #ctxmenu button:focus-visible { background: #234452; color: var(--cyan); }
 #ctxmenu button.cancel { color: var(--dim); }
+#taxibuild { position: absolute; left: 12px; bottom: 54px; z-index: 4; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; padding: 8px 10px; max-width: min(460px, calc(100% - 24px)); display: flex; flex-direction: column; gap: 4px; }
+#taxibuild[hidden] { display: none; }
+#taxibuild .tb-head span { color: var(--dim); margin-left: 6px; font-size: 10px; }
+#taxibuild .tb-route { color: var(--cyan); font-size: 13px; word-break: break-word; }
+#taxibuild .tb-hint { color: var(--dim); font-size: 10px; }
+#taxibuild .tb-btns { display: flex; gap: 4px; }
+#taxibuild button[disabled] { opacity: 0.4; cursor: not-allowed; }
 #viewtabs { position: absolute; top: 8px; left: 10px; display: flex; gap: 0; z-index: 4; }
 #viewtabs button { border-radius: 0; padding: 4px 12px; }
 #viewtabs button:first-child { border-radius: 3px 0 0 3px; }

@@ -369,7 +369,7 @@ class Aircraft {
   }
 
   goAround(game, reason = 'going around') {
-    this.est = this.gs = this.ils = this.app = this.landClr = false;
+    this.est = this.gs = this.ils = this.app = this.landClr = this.rwyChecked = false;
     this.mode = 'heading';
     this.route = [];
     this.hold = null;

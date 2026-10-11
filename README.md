@@ -18,11 +18,14 @@ python3 -m http.server 8000   # then open http://localhost:8000
 Pick your position in the top bar (or type `.pos twr`, `.pos app`, `.pos all`). An AI controller works the other position,
 and you can switch at any time.
 
-| Position | You handle | The AI handles |
-| --- | --- | --- |
-| **Tower** (DEL/GND/TWR) | Clearances (`caf`), line-up and take-off, landing clearances (`cl`), transfer of departures to Departure (`ho`) | Arrivals from entry to the ILS, then it transfers them to you; departures after you transfer them |
-| **Approach** (APP/DEP) | Arrivals from entry to the ILS, then transfer to Tower (`ho`); departures from take-off up to Control (`ho`) | Clearances, take-offs, landing clearances |
-| **Combined** | Everything; Tower↔Approach transfers and landing clearances are automatic | — |
+| Position | You handle |
+| --- | --- |
+| **Ground** (DEL/GND) | Clearances (`caf`), pushback, taxi out on the route you assign, transfer to Tower at the holding point (`ho`); arrivals after they vacate, taxi in to their stand |
+| **Tower** | Line-up and take-off, transfer departures to Departure (`ho`); landing clearances (`cl`), transfer vacated arrivals to Ground (`ho`) |
+| **Approach** (APP/DEP) | Arrivals from entry to the ILS, then transfer to Tower (`ho`); departures from Tower up to Control (`ho`) |
+| **Combined** | Everything; transfers between your positions and landing clearances are automatic |
+
+AI controllers work every position you are not working.
 
 Arrivals without a landing clearance go around at 1 nm. Aircraft on the AI's frequency have grey tags and strips, and their
 radio calls are dimmed in the log. You only lose points for separation involving your own aircraft.
@@ -40,8 +43,10 @@ Switch the scope to **Ground chart** (tab at the top left, or `.gnd`) to see the
 - **Holding points:** A1–A7 and B1–B7, with stop bars.
 - **Stands and buildings:** 24 stands around the terminal, plus the control tower and the fire station.
 
-Departures start on a stand and call Delivery. Give them `caf`, then `taxi`: they push back and taxi to their runway's
-holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L). You can name the route (`taxi A7 via P J3 A`). When they report
+Departures start on a stand and call Delivery. Give them `caf`, then assign the taxi route. Select the aircraft, click the
+taxiways in order, then click the holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L) and press **Send taxi**. You can also
+type it: `taxi A7 via P J3 A`. The `via` taxiways are followed in that order. Aircraft push back in an arc (`pb e` / `pb w` picks
+the facing), then taxi with smooth turns, slowing for corners and stopping behind traffic. When they report
 ready, use `lu`/`cto`. Arrivals vacate at the first exit they can make and ask for taxi; `taxi` sends them to their stand
 (or `taxi 14` for stand 14). Right-click a holding point or stand on the chart for the same options. Tick **Auto taxi** to let
 the AI do ground movement.
@@ -65,7 +70,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | Command | Meaning |
 | --- | --- |
 | `caf` | Cleared as filed: IFR clearance, SID, squawk, initial climb 6000 |
-| `pb` | Pushback |
+| `pb [e\|w]` | Pushback, ending up facing east or west |
 | `taxi [A7\|26R\|12] [via P J3 A]` | Taxi to a holding point, runway or stand, optionally via named taxiways |
 | `hpos` / `cont` | Hold position / continue taxi |
 | `lu [rwy]` | Line up and wait (at the holding point) |
@@ -80,11 +85,11 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `res` | Resume own navigation on the route |
 | `ga` | Go around |
 | `cl` | Cleared to land (tower) |
-| `ho` | Transfer: Tower → Departure, Approach → Tower (once on the ILS), Departure → Control |
+| `ho` | Transfer: Ground → Tower, Tower → Ground (vacated arrivals), Tower → Departure, Approach → Tower, Departure → Control |
 | `sq 4521` | Squawk code |
 | `del` | Delete an aircraft |
 
-System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos twr|app|all`, `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
+System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos gnd|twr|app|all`, `.pause`, `.speed 1|2|4`, `.config 26|08`, `.traffic low|med|high`, `.routes all|sel|off`,
 `.procs`, `.voice`, `.help`, `.restart`.
 
 ## Realism

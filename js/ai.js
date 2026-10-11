@@ -1,9 +1,11 @@
-// AI controller for the position the player is not working.
-// Tower (TWR): delivery/ground/tower — clearances, line-up, take-off, landing clearances.
+// AI controllers for the positions the player is not working.
+// Ground (GND): delivery and ground — clearances, pushback, taxi out to the holding point, taxi in after vacating.
+// Tower (TWR): the runways — line-up, take-off, landing clearances, until departures are airborne / arrivals vacate.
 // Approach (APP): arrivals from entry to the localizer, departures from tower until the next sector.
 const POSITIONS = {
-  ALL: { name: 'Combined APP + TWR', short: 'ALL' },
-  TWR: { name: 'Tower (DEL/GND/TWR)', short: 'TWR', freq: '118.500', call: 'Ravenwood Tower' },
+  ALL: { name: 'Combined GND + TWR + APP', short: 'ALL' },
+  GND: { name: 'Ground (DEL/GND)', short: 'GND', freq: '121.800', call: 'Ravenwood Ground' },
+  TWR: { name: 'Tower', short: 'TWR', freq: '118.500', call: 'Ravenwood Tower' },
   APP: { name: 'Approach / Departure', short: 'APP', freq: '119.725', call: 'Ravenwood Approach' },
   CTR: { name: 'Ravenwood Control', short: 'CTR', freq: '128.400', call: 'Ravenwood Control' },
 };
@@ -24,20 +26,53 @@ class AIController {
     this.timer = 0;
     const g = this.game;
     const pos = g.position;
+    const ai = (p) => pos !== p && pos !== 'ALL';
     for (const ac of g.aircraft) {
       if (ac.state === 'gone' || ac.owner === 'CTR') continue;
       if (pos === 'ALL') this.combinedTransfers(ac);
-      if (g.autoTaxi && ac.owner === 'TWR' && g.userOwns(ac)) this.groundMovement(ac);
-      if (pos !== 'TWR' && pos !== 'ALL' && ac.owner === 'TWR') this.tower(ac);
-      if (pos !== 'APP' && pos !== 'ALL' && ac.owner === 'APP') this.approach(ac);
+      if (g.autoTaxi && ac.owner === 'GND' && g.userOwns(ac)) this.groundMovement(ac);
+      if (ai('GND') && ac.owner === 'GND') this.ground(ac);
+      if (ai('TWR') && ac.owner === 'TWR') this.tower(ac);
+      if (ai('APP') && ac.owner === 'APP') this.approach(ac);
     }
-    if (pos === 'TWR') this.sequenceArrivals();
+    if (ai('APP')) this.sequenceArrivals();
     if (pos === 'APP') this.warnUnhandedArrivals();
+    if (pos === 'GND' || pos === 'TWR') this.warnPendingTransfers();
+  }
+
+  // Remind the player about aircraft waiting on their frequency for a transfer.
+  warnPendingTransfers() {
+    const g = this.game;
+    for (const ac of g.aircraft) {
+      if (!g.userOwns(ac) || ac.transferWarned) continue;
+      const waiting = g.time - (ac.waitSince ?? g.time);
+      if (g.position === 'GND' && ac.state === 'ground' && waiting > 45) {
+        ac.transferWarned = true;
+        g.log(`Ravenwood Tower: ${ac.cs} is waiting at holding point ${ac.gnode} — transfer it to me (ho)`, 'err');
+      }
+      if (g.position === 'TWR' && ac.isArr && ac.state === 'taxi' && ac.vacatedVia && waiting > 45) {
+        ac.transferWarned = true;
+        g.log(`Ravenwood Ground: ${ac.cs} has vacated via ${ac.vacatedVia} — transfer it to me (ho)`, 'err');
+      }
+    }
+  }
+
+  // ---------- AI ground ----------
+  ground(ac) {
+    const g = this.game;
+    if (ac.state === 'stand' && !ac.isArr && !ac.cleared) {
+      if (g.time - ac.spawnTime > 20) this.cmd(ac, 'caf');
+      return;
+    }
+    if (ac.state === 'ground') { this.cmd(ac, 'ho'); return; } // at the holding point: over to tower
+    this.groundMovement(ac);
   }
 
   // Combined position: the player is both, so frequency changes happen silently.
   combinedTransfers(ac) {
     const g = this.game;
+    if (!ac.isArr && ac.state === 'ground' && ac.owner === 'GND') g.transfer(ac, 'TWR', { silent: true });
+    if (ac.isArr && ac.state === 'taxi' && ac.owner === 'TWR') g.transfer(ac, 'GND', { silent: true });
     if (!ac.isArr && ac.airborne && ac.owner === 'TWR' && ac.alt >= 1500) g.transfer(ac, 'APP', { silent: true });
     if (ac.isArr && ac.est && ac.owner === 'APP') g.transfer(ac, 'TWR', { silent: true });
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 6) {
@@ -58,11 +93,7 @@ class AIController {
   // ---------- AI tower ----------
   tower(ac) {
     const g = this.game;
-    if (ac.state === 'stand' && !ac.cleared) {
-      if (g.time - ac.spawnTime > 20) this.cmd(ac, 'caf');
-      return;
-    }
-    if (['stand', 'taxi'].includes(ac.state)) { this.groundMovement(ac); return; }
+    if (ac.isArr && ac.state === 'taxi') { this.cmd(ac, 'ho'); return; } // vacated: over to ground
     if (ac.state === 'ground') {
       if (ac.cleared && this.runwayFree(ac)) {
         this.cmd(ac, 'cto');

@@ -20,6 +20,7 @@
     <div class="controls">
       <select id="sel-pos" title="Your controller position (the other is flown by AI)">
         <option value="ALL">Position: Combined</option>
+        <option value="GND">Position: Ground</option>
         <option value="TWR">Position: Tower</option>
         <option value="APP">Position: Approach</option>
       </select>
@@ -54,6 +55,7 @@
         <button id="tab-ground">Ground chart</button>
       </div>
       <div id="ctxmenu" hidden></div>
+      <div id="taxibuild" hidden></div>
       <div id="legend">
         <span><i class="ln dep"></i>Departure route</span>
         <span><i class="ln arr"></i>Arrival route</span>
@@ -88,9 +90,11 @@
         heavy and <b>5 nm</b> for a medium. Yellow tags = predicted conflict or wake spacing, red = separation lost.</p>
       <h2>Ground chart (Tower)</h2>
       <p>Switch to <b>Ground chart</b> (tab at the top left of the scope, or <code>.gnd</code>) to see the airfield.
-        Departures start on a stand and call Delivery. Give them <code>caf</code>, then <code>taxi</code>: they push back and
-        taxi to their runway's holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L). You can name the route:
-        <code>taxi A7 via P J3 A</code>. Once they report ready at the holding point, use <code>lu</code> / <code>cto</code>.
+        Departures start on a stand and call Delivery. Give them <code>caf</code>, then assign the taxi route: <b>select the
+        aircraft, click the taxiways in order, then click the holding point</b> (A1/A7 for 08L/26R, B1/B7 for 08R/26L) and press
+        <b>Send taxi</b>. Or type it: <code>taxi A7 via P J3 A</code>. They push back in an arc (choose the facing with
+        <code>pb e</code> / <code>pb w</code>), then taxi following the route in that order, turning smoothly and slowing for corners.
+        Taxiing to the other parallel's holding point switches runway if there is a matching departure. Once they report ready at the holding point, use <code>lu</code> / <code>cto</code>.
         Arrivals vacate at the first exit they can make and ask for taxi; <code>taxi</code> sends them to their stand
         (or <code>taxi 14</code> for stand 14). <code>hpos</code> and <code>cont</code> stop and restart a taxiing aircraft.
         Right-click a holding point or stand on the chart for the same instructions. With <b>Auto taxi</b> ticked, ground
@@ -108,16 +112,21 @@
         Transition altitude is 6000 ft; pilots set QNH when descending below it. Published holds are marked with a dot under
         the fix; hover a fix with an aircraft selected, or tick <i>Procs</i>, to see them.</p>
       <h2>Positions</h2>
-      <p>Pick your position in the top bar (or <code>.pos twr</code> / <code>.pos app</code> / <code>.pos all</code>). The other
-        position is worked by an AI controller, and you can switch at any time.</p>
+      <p>Pick your position in the top bar (or <code>.pos gnd</code> / <code>.pos twr</code> / <code>.pos app</code> /
+        <code>.pos all</code>). AI controllers work the other positions, and you can switch at any time.</p>
       <table>
-        <tr><td><b>Tower</b></td><td>Departures: clearance (<code>caf</code>), <code>lu</code>, <code>cto</code>, then transfer to
-          Departure (<code>ho</code>) passing about 1500–5000 ft. Arrivals: Approach transfers them to you on the ILS. Give them
-          <code>cl</code> (cleared to land), or they go around at 1 nm. Keep the runway clear.</td></tr>
+        <tr><td><b>Ground</b></td><td>Departures: clearance (<code>caf</code>), pushback, taxi to the holding point on the route you
+          give, then transfer to Tower (<code>ho</code>). Arrivals: Tower transfers them to you after they vacate. Taxi them to
+          their stand. Opens on the ground chart.</td></tr>
+        <tr><td><b>Tower</b></td><td>Departures arrive at the holding point from Ground: <code>lu</code>, <code>cto</code>, then
+          transfer to Departure (<code>ho</code>) passing about 1500–5000 ft. Arrivals: Approach transfers them to you on the ILS.
+          Give <code>cl</code> (cleared to land) or they go around at 1 nm, then transfer them to Ground (<code>ho</code>)
+          once they vacate. An arrival reaching the threshold with the runway occupied goes around.</td></tr>
         <tr><td><b>Approach</b></td><td>Arrivals from the entry fix: descend, sequence, vector or clear the approach, then transfer
           to Tower (<code>ho</code>) once on the ILS. Departures check in after Tower transfers them: climb them and hand them to
           Control (<code>ho</code>) above FL100, 20 nm out.</td></tr>
-        <tr><td><b>Combined</b></td><td>You do both; landing clearances and frequency changes between Tower and Approach are automatic.</td></tr>
+        <tr><td><b>Combined</b></td><td>You do everything. Frequency changes between your positions and landing clearances
+          are automatic, and <b>Auto taxi</b> can do the taxiing.</td></tr>
       </table>
       <p>Aircraft on the AI's frequency have grey tags and strips. Their radio calls appear dimmed in the log. You only lose
         points for separation on aircraft that are on your frequency.</p>

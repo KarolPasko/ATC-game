@@ -77,6 +77,7 @@ class Game {
     for (const ac of this.aircraft) ac.update(dt, this);
     this.ai.update(dt);
     this.checkBoundaries();
+    this.checkLandingRunways();
     this.sepTimer = (this.sepTimer || 0) + dt;
     if (this.sepTimer >= 1) { this.sepTimer = 0; this.checkSeparation(); }
     if (this.selected && this.selected.state === 'gone') this.select(null);
@@ -150,7 +151,7 @@ class Game {
       x: n.x, y: n.y, alt: 0, tgtAlt: 0, spd: 0,
       state: 'stand', stand, gnode: st.node, rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(),
       orig: AIRPORT.icao, dest: rnd(OUTSTATIONS[FIX_DIRECTION[sid.fixes[sid.fixes.length - 1]]]),
-      squawk: this.newSquawk(), cleared: false, spawnTime: this.time, owner: 'TWR',
+      squawk: this.newSquawk(), cleared: false, spawnTime: this.time, owner: 'GND',
       cruise: rnd([240, 280, 320, 360]),
     });
     ac.hdg = ac.tgtHdg = Geo.bearing(n, GROUND.toWorld(st.u, 0)); // nose-in to the terminal
@@ -236,19 +237,54 @@ class Game {
       if (scored) this.addScore(ac.est ? 20 : 10, `${ac.cs} transferred to Tower${ac.est ? '' : ' (not yet established)'}`);
       if (!silent) this.pilotSay(ac, `Ravenwood Tower, ILS ${ac.rwy}${ac.est ? ' established' : ''}, ${ac.finalGeometry().along.toFixed(0)} miles`);
     }
+    // Ground -> Tower at the holding point; Tower -> Ground after vacating.
+    if (from === 'GND' && to === 'TWR' && !ac.isArr) {
+      if (scored) this.stats.departed++;
+      if (scored) this.addScore(ac.state === 'ground' ? 10 : 5, `${ac.cs} transferred to Tower`);
+      if (!silent) this.pilotSay(ac, ac.state === 'ground'
+        ? `Ravenwood Tower, holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`
+        : `Ravenwood Tower, taxiing to holding point ${ac.taxiTarget}, runway ${ac.rwy}`);
+      ac.waitSince = this.time;
+    }
+    if (from === 'TWR' && to === 'GND' && ac.isArr) {
+      if (scored) this.addScore(10, `${ac.cs} transferred to Ground`);
+      if (!silent) this.pilotSay(ac, `Ravenwood Ground, vacated via ${ac.vacatedVia || 'the runway'}, request taxi to stand ${ac.stand}`);
+      ac.waitSince = this.time;
+    }
+    ac.transferWarned = false;
+  }
+
+  // ---------- ground events ----------
+  onReachedHoldingPoint(ac) {
+    ac.waitSince = this.time;
+    this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}${ac.owner === 'TWR' ? ', ready for departure' : ''}`);
+  }
+
+  onVacated(ac) {
+    ac.waitSince = this.time;
+    this.pilotSay(ac, ac.owner === 'GND'
+      ? `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`
+      : `runway ${ac.rwy} vacated via ${ac.vacatedVia}`);
+  }
+
+  onParked(ac) {
+    this.log(`${ac.cs} on stand ${ac.stand}`, 'sys');
+    if (this.userOwns(ac) && this.position !== 'ALL') this.addScore(10, `${ac.cs} taxied to stand ${ac.stand}`);
   }
 
   setPosition(p) {
     if (p === this.position) return;
     this.position = p;
     const desc = {
-      ALL: 'You control everything: approach, departure and tower.',
-      TWR: 'You are Tower: clearances (caf), line-up, take-off, landing clearances (cl), and transfer departures to Departure (ho). AI works Approach.',
-      APP: 'You are Approach/Departure: arrivals to the ILS then transfer to Tower (ho), departures after take-off up to Control (ho). AI works Tower.',
+      ALL: 'You control everything: ground, tower and approach.',
+      GND: 'You are Ground: clearances (caf), pushback (pb) and taxi to the holding point, then transfer to Tower (ho); arrivals call you after vacating — taxi them to their stand. AI works Tower and Approach.',
+      TWR: 'You are Tower: line-up and take-off, transfer departures to Departure (ho); landing clearances (cl) and transfer vacated arrivals to Ground (ho). AI works Ground and Approach.',
+      APP: 'You are Approach/Departure: arrivals to the ILS then transfer to Tower (ho), departures after take-off up to Control (ho). AI works Ground and Tower.',
     }[p];
     this.log(`Position: ${POSITIONS[p].name}. ${desc}`, 'sys');
     this.radar.zoomFor(p);
-    this.autoTaxi = p !== 'TWR'; // Tower players taxi their own traffic by default
+    this.viewMode = p === 'GND' ? 'ground' : 'radar';
+    this.autoTaxi = p === 'ALL'; // Ground players taxi their own traffic
     if (this.selected && !this.userOwns(this.selected)) this.select(null);
     this.ui.update();
   }
@@ -266,6 +302,29 @@ class Game {
     if (d >= 20 && ac.alt >= 10000) this.addScore(100, `${ac.cs} handed off`);
     else if (ac.alt >= SID_TOP) this.addScore(50, `${ac.cs} handed off (low/early — climb them higher first)`);
     else this.addScore(20, `${ac.cs} handed off very early`);
+  }
+
+  // Landing clearance with the runway occupied is only a warning: the controller expects it to clear in time.
+  warnRunwayOccupied(ac) {
+    const busy = this.runwayOccupant(ac);
+    if (busy) this.log(`Note: runway ${ac.rwy} is occupied by ${busy.cs} — make sure it is clear before ${ac.cs} arrives`, 'sys');
+  }
+
+  runwayOccupant(ac) {
+    return this.aircraft.find((o) => o !== ac && o.runway?.phys === ac.runway.phys &&
+      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.airborne && !o.isArr && o.alt < 300)));
+  }
+
+  // An arrival reaching the threshold with the runway still occupied must go around.
+  checkLandingRunways() {
+    for (const ac of this.aircraft) {
+      if (!ac.isArr || !ac.est || ac.rwyChecked || ac.finalGeometry().along > 0.6) continue;
+      ac.rwyChecked = true;
+      const busy = this.runwayOccupant(ac);
+      if (!busy) continue;
+      if (this.userOwns(ac) || this.userOwns(busy)) this.addScore(-50, `Runway ${ac.rwy} occupied by ${busy.cs} with ${ac.cs} on short final`);
+      ac.goAround(this, `runway occupied by ${busy.cs}, going around`);
+    }
   }
 
   checkRunwayClear(ac) {

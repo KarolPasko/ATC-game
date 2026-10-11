@@ -123,33 +123,62 @@ const GROUND = (() => {
 
   const taxiwayNames = new Set(edges.filter((e) => e.kind !== 'rwy' && e.kind !== 'stand').map((e) => e.name));
 
-  // Shortest taxi route; with `via`, taxiways not in the list cost much more.
-  function route(from, to, via = null) {
-    const dist = { [from]: 0 }, prev = {}, done = new Set();
-    const viaSet = via && via.length ? new Set(via) : null;
-    const open = [from];
+  // Taxi route from one node to another. With `via`, the taxiways are followed in that order:
+  // the search state is (node, index of the current via taxiway). Short connecting pieces
+  // (stand lead-ins, runway connectors, rapid exits) may be used anywhere; other taxiways
+  // only before joining the first via taxiway, at a heavy cost.
+  function route(from, to, via = []) {
+    via = via || [];
+    const key = (n, k) => `${n}|${k}`;
+    const dist = { [key(from, -1)]: 0 }, prev = {}, done = new Set();
+    const open = [[from, -1]];
+    let goal = null;
+    const last = via.length - 1;
     while (open.length) {
-      open.sort((a, b) => dist[a] - dist[b]);
-      const n = open.shift();
-      if (n === to) break;
-      if (done.has(n)) continue;
-      done.add(n);
+      open.sort((p, q) => dist[key(...p)] - dist[key(...q)]);
+      const [n, k] = open.shift();
+      const nk = key(n, k);
+      if (done.has(nk)) continue;
+      done.add(nk);
+      if (n === to && k === last) { goal = nk; break; }
       for (const { to: m, e } of adj[n] || []) {
         if (e.kind === 'rwy') continue;
         if (e.kind === 'stand' && m !== to && n !== from) continue; // never route through a stand
-        const k = viaSet && !viaSet.has(e.name) && !['stand', 'conn', 'rapid'].includes(e.kind) ? 8 : 1;
-        const d = dist[n] + e.len * k;
-        if (d < (dist[m] ?? Infinity)) { dist[m] = d; prev[m] = { n, e }; open.push(m); }
+        let k2 = k, cost = e.len;
+        if (via.length) {
+          if (e.name === via[k]) k2 = k;
+          else if (e.name === via[k + 1]) k2 = k + 1;
+          else if (['stand', 'conn', 'rapid'].includes(e.kind)) cost *= 1.5;
+          else if (k === -1) cost *= 6; // before joining the first via taxiway
+          else if (k === last) cost *= 3; // after the last one: finish on the shortest connection
+          else continue;
+        }
+        const mk = key(m, k2), d = dist[nk] + cost;
+        if (d < (dist[mk] ?? Infinity)) { dist[mk] = d; prev[mk] = { nk, n, e }; open.push([m, k2]); }
       }
     }
-    if (dist[to] === undefined) return null;
+    if (!goal) return null;
     const path = [], names = [];
-    for (let n = to; n !== from; n = prev[n].n) {
-      path.unshift(n);
-      const nm = prev[n].e.name;
-      if (prev[n].e.kind !== 'stand' && names[0] !== nm) names.unshift(nm);
+    for (let c = goal; c !== key(from, -1); c = prev[c].nk) {
+      path.unshift(c.split('|')[0]);
+      const nm = prev[c].e.name;
+      if (prev[c].e.kind !== 'stand' && names[0] !== nm) names.unshift(nm);
     }
     return { path, names };
+  }
+
+  // Nearest taxiway edge to a world point (nm), for clicking routes on the chart.
+  function nearestEdge(p, maxNm) {
+    let best = null, bd = maxNm;
+    for (const e of edges) {
+      if (e.kind === 'rwy' || e.kind === 'stand') continue;
+      const A = nodes[e.a], B = nodes[e.b];
+      const dx = B.x - A.x, dy = B.y - A.y, l2 = dx * dx + dy * dy;
+      const t = Geo.clamp(((p.x - A.x) * dx + (p.y - A.y) * dy) / l2, 0, 1);
+      const d = Math.hypot(p.x - (A.x + t * dx), p.y - (A.y + t * dy));
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
   }
 
   // Nearest node to a world position (used when re-routing).
@@ -164,7 +193,7 @@ const GROUND = (() => {
   }
 
   return {
-    M_PER_NM, U, V, toWorld, nodes, edges, route, nearestNode, holdingPoints, exits, stands, signs, taxiwayNames,
+    M_PER_NM, U, V, toWorld, nodes, edges, route, nearestNode, nearestEdge, holdingPoints, exits, stands, signs, taxiwayNames,
     dims: { RWY_HALF, RWY_V, RWY_W, TWY_V, HOLD_V, LANE_V, STAND_V, TWY_W },
   };
 })();
@@ -173,98 +202,162 @@ const GROUND_STATES = ['stand', 'pushback', 'taxi', 'ground', 'lineup', 'parked'
 const TAXI_KT = 15;
 
 // ---------- ground movement on Aircraft ----------
+const nmOf = (m) => m / GROUND.M_PER_NM;
+const bezier = (a, b, c, t) => ({
+  x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * b.x + t * t * c.x,
+  y: (1 - t) * (1 - t) * a.y + 2 * (1 - t) * t * b.y + t * t * c.y,
+});
+
 Object.assign(Aircraft.prototype, {
   onGround() { return GROUND_STATES.includes(this.state) || this.state === 'landed'; },
+  canTaxi() { return ['stand', 'pushback', 'taxi', 'ground'].includes(this.state); },
 
-  // Start taxiing to a node (holding point or stand). Returns the route or null.
-  startTaxi(target, via = null) {
-    let from = this.gnode;
-    if (this.state === 'taxi' && this.taxiPath?.length) from = this.taxiPath[0];
-    if (this.state === 'stand') from = GROUND.stands[this.stand].lane; // pushback first
-    if (this.state === 'pushback') from = this.pushTo;
+  // Node a new taxi route starts from.
+  taxiStartNode() {
+    if (this.state === 'stand') return GROUND.stands[this.stand].lane;
+    if (this.state === 'pushback') return this.push.lane;
+    if (this.state === 'taxi' && this.taxiPath?.length) return this.taxiPath[0];
+    return this.gnode;
+  },
+
+  // Start taxiing to a node (holding point or stand). From a stand this includes the pushback.
+  startTaxi(target, via = []) {
+    const from = this.taxiStartNode();
     const r = GROUND.route(from, target, via);
     if (!r) return null;
-    if (this.state === 'stand' || this.state === 'pushback') {
-      this.state = 'pushback';
-      this.pushTo = from;
-      this.taxiPath = r.path;
+    if (this.state === 'stand') {
+      this.beginPushback(this.faceFromPath(from, r.path), [from, ...r.path]);
+    } else if (this.state === 'pushback') {
+      this.push.next = [from, ...r.path];
     } else {
-      if (this.state === 'taxi' && this.taxiPath?.length) r.path.unshift(from);
       this.state = 'taxi';
-      this.taxiPath = r.path;
+      this.taxiPath = this.taxiPath?.length || this.gnode !== from ? [from, ...r.path] : r.path;
     }
     this.taxiTarget = target;
+    this.taxiNames = r.names;
     this.holdPos = false;
     this._pred = null;
     return r;
   },
 
-  // Push back off the stand onto the taxilane, then wait for taxi (or continue if already cleared).
-  pushback() {
-    if (this.state !== 'stand') return false;
+  // Is a taxi route currently cleared and being followed (or waiting for pushback to finish)?
+  hasTaxiRoute() {
+    return (this.state === 'pushback' && this.push?.next?.length) || (this.state === 'taxi' && this.taxiPath?.length > 0);
+  },
+
+  // Which way the nose should end up after pushback so the first taxi leg is straight ahead.
+  faceFromPath(lane, path) {
+    const L = GROUND.nodes[lane];
+    const next = path.map((n) => GROUND.nodes[n]).find((n) => Math.abs(n.u - L.u) > 1);
+    return next && next.u < L.u ? 'W' : 'E';
+  },
+
+  // Push back in an arc: tail swings onto the taxilane, nose ends up facing `face` (E/W).
+  beginPushback(face, next = []) {
+    const st = GROUND.stands[this.stand];
+    const lane = GROUND.nodes[st.lane];
+    const dirU = face === 'E' ? -1 : 1; // the tail moves opposite to the final facing
+    const p0 = { x: this.x, y: this.y };
+    const p2 = GROUND.toWorld(lane.u + dirU * 70, lane.v);
+    const len = Geo.dist(p0, lane) + Geo.dist(lane, p2);
     this.state = 'pushback';
-    this.pushTo = GROUND.stands[this.stand].lane;
-    this.taxiPath = [];
-    return true;
+    this.push = { p0, p1: { x: lane.x, y: lane.y }, p2, lane: st.lane, len, s: 0, face, next };
+    this.spd = 0;
+  },
+
+  pushback(face = null) {
+    if (this.state !== 'stand') return false;
+    if (!face) {
+      const hp = GROUND.nodes[GROUND.holdingPoints[this.rwy]];
+      face = hp.u > GROUND.stands[this.stand].u ? 'E' : 'W';
+    }
+    this.beginPushback(face, []);
+    this.taxiTarget = null;
+    return face;
   },
 
   groundUpdate(dt, game) {
     if (this.state === 'parked') { if (game.time - this.parkTime > 90) this.state = 'gone'; return; }
-    if (this.state === 'pushback') {
-      const n = GROUND.nodes[this.pushTo];
-      this.spd = 3;
-      if (this.moveToward(n, dt, true)) {
-        this.gnode = this.pushTo;
-        this.state = 'taxi';
-        this.spd = 0;
-        if (this.taxiPath.length) this.hdg = Geo.bearing(this, GROUND.nodes[this.taxiPath[0]]);
-        else {
-          // Pushed back facing along the taxilane towards the departure runway end.
-          const hp = GROUND.nodes[GROUND.holdingPoints[this.rwy]];
-          this.hdg = hp.u > n.u ? 80 : 260;
-          game.pilotSay(this, 'pushback complete, ready to taxi');
-        }
-      }
-      return;
-    }
+    if (this.state === 'pushback') return this.pushUpdate(dt, game);
     if (this.state !== 'taxi') return;
-    if (!this.taxiPath.length || this.holdPos) { this.spd = 0; return; }
-    const blocker = game.groundBlocker(this);
-    const target = blocker ? 0 : TAXI_KT;
-    this.spd += Geo.clamp(target - this.spd, -6 * dt, 1.5 * dt);
-    if (this.spd <= 0.1) return;
-    const n = GROUND.nodes[this.taxiPath[0]];
-    if (this.moveToward(n, dt)) {
-      this.gnode = this.taxiPath.shift();
-      if (!this.taxiPath.length) this.arriveAt(game);
+    if (!this.taxiPath.length || this.holdPos) { this.spd = Math.max(0, this.spd - 4 * dt); this.coast(dt); return; }
+    this.taxiStep(dt, game);
+  },
+
+  pushUpdate(dt, game) {
+    const P = this.push;
+    this.spd = Math.min(5, this.spd + 1 * dt);
+    P.s = Math.min(1, P.s + (this.spd / 3600) * dt / P.len);
+    const a = bezier(P.p0, P.p1, P.p2, P.s), b = bezier(P.p0, P.p1, P.p2, Math.min(1, P.s + 0.01));
+    this.x = a.x; this.y = a.y;
+    if (P.s < 0.99) this.hdg = Geo.norm(Geo.bearing(a, b) + 180); // nose opposite to the direction of travel
+    if (P.s >= 1) {
+      this.hdg = P.face === 'E' ? 80 : 260;
+      this.state = 'taxi';
+      this.spd = 0;
+      this.gnode = null;
+      this.taxiPath = P.next.length ? P.next : [];
+      if (!this.taxiPath.length) { this.gnode = P.lane; this.parkedAt = { x: this.x, y: this.y }; game.pilotSay(this, 'pushback complete, ready to taxi'); }
     }
   },
 
-  // Move towards a node at the current speed; returns true when reached.
-  moveToward(n, dt, backwards = false) {
-    const step = (this.spd / 3600) * dt;
-    const d = Geo.dist(this, n);
-    if (d <= step) { this.x = n.x; this.y = n.y; return true; }
-    const b = Geo.bearing(this, n);
-    if (!backwards) this.hdg = b;
-    const v = Geo.vec(b);
-    this.x += v.x * step; this.y += v.y * step;
-    return false;
+  // Roll to a stop when there is nowhere to go.
+  coast(dt) { if (this.spd > 0) this.move(dt); },
+
+  // Follow the taxi path with smooth turns: steer towards a look-ahead point along the path,
+  // with the turn rate limited by a minimum turn radius, and slow down for sharp turns.
+  taxiStep(dt, game) {
+    const LOOK = nmOf(26), MIN_R = 18; // metres
+    const n0 = GROUND.nodes[this.taxiPath[0]], n1 = this.taxiPath[1] && GROUND.nodes[this.taxiPath[1]];
+    const d0 = Geo.dist(this, n0);
+    // Speed: 15 kt on taxiways, 10 kt on the apron, slower for sharp turns and the final stop.
+    let target = n0.kind === 'stand' || /^[PQ]@/.test(n0.name) ? 10 : TAXI_KT;
+    if (n1) {
+      const turn = Math.abs(Geo.diff(Geo.bearing(this, n0), Geo.bearing(n0, n1)));
+      if (turn > 35 && d0 < nmOf(70)) target = Math.min(target, turn > 120 ? 4 : turn > 75 ? 7 : 10);
+    } else if (d0 < nmOf(60)) target = Math.min(target, 5);
+    if (game.groundBlocker(this)) target = 0;
+    this.spd += Geo.clamp(target - this.spd, -4 * dt, 1.5 * dt);
+    // Look-ahead point
+    let aim = n0;
+    if (n1 && d0 < LOOK) {
+      const k = (LOOK - d0) / Geo.dist(n0, n1);
+      aim = { x: n0.x + (n1.x - n0.x) * Math.min(1, k), y: n0.y + (n1.y - n0.y) * Math.min(1, k) };
+    }
+    const want = Geo.bearing(this, aim);
+    const ms = this.spd * 0.5144;
+    const rate = Geo.deg(ms / MIN_R) + 1.5; // deg/s
+    const d = Geo.diff(this.hdg, want);
+    this.hdg = Geo.norm(this.hdg + Geo.clamp(d, -rate * dt, rate * dt));
+    if (this.spd > 0.05) this.move(dt);
+    // Node passing
+    const ahead = Math.cos(Geo.rad(Geo.diff(this.hdg, Geo.bearing(this, n0))));
+    if (n1 && (d0 < LOOK * 0.6 || (d0 < LOOK && ahead < 0))) {
+      this.gnode = this.taxiPath.shift();
+    } else if (!n1 && (d0 < nmOf(3) || (d0 < nmOf(12) && ahead < 0))) {
+      this.gnode = this.taxiPath.shift();
+      this.x = n0.x; this.y = n0.y;
+      this.arriveAt(game);
+    }
   },
 
+  // On the ground, aircraft move along their heading (no wind).
   arriveAt(game) {
     this.spd = 0;
     const n = GROUND.nodes[this.gnode];
     if (!this.isArr && this.gnode === GROUND.holdingPoints[this.rwy]) {
       this.state = 'ground';
       this.hdg = Geo.bearing(n, GROUND.nodes[`R${this.runway.phys}${n.u}`]);
-      game.pilotSay(this, `holding point ${this.gnode}, runway ${this.rwy}, ready for departure`);
+      game.onReachedHoldingPoint(this);
     } else if (this.isArr && n.kind === 'stand') {
       this.state = 'parked';
       this.parkTime = game.time;
-      game.log(`${this.cs} on stand ${this.stand}`, 'sys');
+      game.onParked(this);
     } else if (n.kind === 'exit' && this.isArr) {
-      game.pilotSay(this, `runway ${this.rwy} vacated via ${n.name.replace(/x$/, '')}, request taxi to stand ${this.stand}`);
+      this.vacatedVia = n.name.replace(/x$/, '');
+      game.onVacated(this);
+    } else {
+      game.pilotSay(this, `holding at ${n.name.replace(/@.*/, '')}, request further taxi`);
     }
   },
 
@@ -274,7 +367,7 @@ Object.assign(Aircraft.prototype, {
     const dirSign = r.heading === 80 ? 1 : -1; // +u for 08, -u for 26
     const here = { u: (this.x * GROUND.M_PER_NM) * GROUND.U.x + (this.y * GROUND.M_PER_NM) * GROUND.U.y };
     const ktToMs = 0.5144;
-    const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 3 * ktToMs;
+    const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 4 * ktToMs;
     const need = (v * v - vExit * vExit) / (2 * a);
     const options = GROUND.exits[this.rwy]
       .map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign }))
@@ -290,7 +383,7 @@ Object.assign(Aircraft.prototype, {
     const dirSign = this.runway.heading === 80 ? 1 : -1;
     const ahead = ((n.x - this.x) * GROUND.U.x + (n.y - this.y) * GROUND.U.y) * GROUND.M_PER_NM * dirSign;
     // Brake to 25 kt for the exit, 18 kt over the last 150 m.
-    this.spd = Math.max(ahead < 150 ? 18 : 25, this.spd - 3 * dt);
+    this.spd = Math.max(ahead < 150 ? 18 : 25, this.spd - 4 * dt);
     if (ahead <= 15) {
       this.state = 'taxi';
       this.gnode = this.exit.rwyNode;
@@ -308,6 +401,98 @@ class GroundView {
     this.radar = radar;
     this.view = { cx: 0, cy: 0, scale: 0.3 }; // world metres centre, px per metre
     this.fitted = false;
+    this.build = null; // taxi route being built by clicking: { cs, via: [], target }
+    this.panel = document.getElementById('taxibuild');
+    this.panel.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-act]')?.dataset.act;
+      if (!act || !this.build) return;
+      const g = this.radar.game;
+      if (act === 'send') { g.commands.execute(this.build.cmd); this.build = null; g.ui.input.value = ''; }
+      else if (act === 'undo') { if (this.build.target) this.build.target = null; else this.build.via.pop(); this.updateBuild(); }
+      else if (act === 'clear') { this.build.via = []; this.build.target = null; this.updateBuild(); }
+      this.renderPanel();
+    });
+  }
+
+  // ---------- taxi route builder ----------
+  canBuild(ac) {
+    const g = this.radar.game;
+    return ac && g.userOwns(ac) && ac.canTaxi() && (ac.isArr || ac.cleared);
+  }
+
+  ensureBuild(ac) {
+    if (!this.build || this.build.cs !== ac.cs) { this.build = { cs: ac.cs, via: [], target: null }; this.updateBuild(); }
+    return this.build;
+  }
+
+  updateBuild() {
+    const b = this.build, g = this.radar.game;
+    const ac = g.findAircraft(b.cs);
+    if (!ac) { this.build = null; return; }
+    const target = b.target || (ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.holdingPoints[ac.rwy]);
+    const r = target && GROUND.route(ac.taxiStartNode(), target, b.via);
+    b.preview = r ? r.path : null;
+    b.names = r ? r.names : [];
+    b.targetName = target;
+    const tgtText = !target ? '' : target.startsWith('ST') ? target.slice(2) : target;
+    b.cmd = `${ac.cs} taxi ${tgtText}${b.via.length ? ' via ' + b.via.join(' ') : ''}`;
+    b.dirty = true;
+  }
+
+  renderPanel() {
+    const g = this.radar.game, sel = g.selected;
+    const show = g.viewMode === 'ground' && this.canBuild(sel);
+    if (!show) { this.panel.hidden = true; return; }
+    const b = this.ensureBuild(sel);
+    const sig = `${sel.state}|${sel.taxiTarget}|${(sel.taxiNames || []).join(',')}`;
+    if (sig !== b.sig) { b.sig = sig; b.dirty = true; }
+    if (!b.dirty && !this.panel.hidden) return;
+    b.dirty = false;
+    const tgtLabel = (t) => (!t ? '—' : t.startsWith('ST') ? `stand ${t.slice(2)}` : t);
+    const routeText = (names, t) => names.filter((n, i) => !(i === names.length - 1 && n === t)).join(' › ');
+    const edited = b.via.length || b.target;
+    // Already cleared and nothing changed: show the cleared route instead of a suggestion.
+    if (!edited && sel.hasTaxiRoute()) {
+      const r = routeText(sel.taxiNames || [], sel.taxiTarget);
+      this.panel.innerHTML = `
+        <div class="tb-head"><b>${esc(sel.cs)}</b> taxi route <span>cleared</span></div>
+        <div class="tb-route">${esc(r)}${r ? ' › ' : ''}<b>${esc(tgtLabel(sel.taxiTarget))}</b></div>
+        <div class="tb-hint">Click taxiways or a holding point / stand to give a new route.</div>`;
+      this.panel.hidden = false;
+      return;
+    }
+    const tgt = tgtLabel(b.targetName);
+    const route = b.preview ? routeText(b.names, b.targetName) : '';
+    this.panel.innerHTML = `
+      <div class="tb-head"><b>${esc(sel.cs)}</b> taxi route <span>${edited ? (sel.hasTaxiRoute() ? 'new route' : 'your route') : 'suggested'}</span></div>
+      <div class="tb-route">${b.preview ? `${esc(route)}${route ? ' › ' : ''}<b>${esc(tgt)}</b>` : `<span class="warn">No route via ${esc(b.via.join(' › '))} to ${esc(tgt)}</span>`}</div>
+      <div class="tb-hint">Click taxiways in order, then a holding point or stand.</div>
+      <div class="tb-btns"><button data-act="send" ${b.preview ? '' : 'disabled'}>Send taxi</button><button data-act="undo">Undo</button><button data-act="clear">Clear</button></div>`;
+    this.panel.hidden = false;
+  }
+
+  // Click on the chart: select an aircraft, or add a taxiway / target to the route being built.
+  click(sx, sy) {
+    const r = this.radar, g = r.game;
+    const ac = r.hitAircraft(sx, sy);
+    if (ac) { g.select(ac); this.build = null; this.renderPanel(); return; }
+    const sel = g.selected;
+    if (!this.canBuild(sel)) { g.select(null); this.build = null; this.renderPanel(); return; }
+    const b = this.ensureBuild(sel);
+    const node = this.hitNode(sx, sy);
+    const w = this.toWorldM(sx, sy);
+    const e = !node && GROUND.nearestEdge({ x: w.x / GROUND.M_PER_NM, y: w.y / GROUND.M_PER_NM }, 10 / this.view.scale / GROUND.M_PER_NM);
+    if (node) b.target = node.name;
+    else if (e) { if (b.via[b.via.length - 1] !== e.name) b.via.push(e.name); }
+    else { g.select(null); this.build = null; this.renderPanel(); return; }
+    this.updateBuild();
+    g.ui.input.value = b.cmd;
+    this.renderPanel();
+  }
+
+  hitEdge(sx, sy) {
+    const w = this.toWorldM(sx, sy);
+    return GROUND.nearestEdge({ x: w.x / GROUND.M_PER_NM, y: w.y / GROUND.M_PER_NM }, 10 / this.view.scale / GROUND.M_PER_NM);
   }
 
   fit() {
@@ -453,9 +638,10 @@ class GroundView {
 
     // Taxi routes and aircraft
     for (const ac of g.aircraft) {
-      if (ac.state !== 'taxi' || !ac.taxiPath?.length) continue;
+      const path = ac.state === 'taxi' ? ac.taxiPath : ac.state === 'pushback' ? ac.push?.next : null;
+      if (!path?.length) continue;
       const sel = ac === g.selected;
-      const pts = [ac, ...ac.taxiPath.map((n) => GROUND.nodes[n])];
+      const pts = [ac, ...path.map((n) => GROUND.nodes[n])];
       ctx.strokeStyle = sel ? 'rgba(95,240,255,0.9)' : 'rgba(110,230,140,0.45)';
       ctx.lineWidth = sel ? 3 : 2;
       ctx.setLineDash(sel ? [] : [6, 4]);
@@ -464,6 +650,37 @@ class GroundView {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+    // Route being built: highlight chosen taxiways and the resulting path.
+    const b = this.build;
+    if (b && g.selected && b.cs === g.selected.cs && this.canBuild(g.selected) && (b.via.length || b.target || !g.selected.hasTaxiRoute())) {
+      this.setLocalTransform();
+      ctx.strokeStyle = 'rgba(95,240,255,0.25)';
+      ctx.lineWidth = GROUND.dims.TWY_W * 1.6;
+      for (const e of GROUND.edges) {
+        if (!b.via.includes(e.name)) continue;
+        const A = GROUND.nodes[e.a], B = GROUND.nodes[e.b];
+        ctx.beginPath(); ctx.moveTo(A.u, A.v); ctx.lineTo(B.u, B.v); ctx.stroke();
+      }
+      this.resetTransform();
+      if (b.preview) {
+        ctx.strokeStyle = '#5ff0ff'; ctx.lineWidth = 2.5; ctx.setLineDash([8, 5]);
+        ctx.beginPath();
+        [g.selected, ...b.preview.map((n) => GROUND.nodes[n])].forEach((q, i) => { const p = this.toScreen(q); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+        ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+    // Taxiway under the mouse while building
+    if (this.canBuild(g.selected) && r.mouse.x >= 0 && !this.hitNode(r.mouse.x, r.mouse.y)) {
+      const e = this.hitEdge(r.mouse.x, r.mouse.y);
+      if (e) {
+        const A = this.toScreen(GROUND.nodes[e.a]), B = this.toScreen(GROUND.nodes[e.b]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+        ctx.font = '11px "JetBrains Mono", monospace'; ctx.fillStyle = '#fff';
+        ctx.fillText(e.name, r.mouse.x + 12, r.mouse.y - 8);
+      }
+    }
+    this.renderPanel();
     r.hitBoxes = [];
     for (const ac of g.aircraft) {
       if (ac.state === 'gone') continue;
@@ -482,7 +699,7 @@ class GroundView {
     }
     ctx.font = '11px "JetBrains Mono", monospace';
     ctx.fillStyle = '#8ea3b5';
-    ctx.fillText(`${AIRPORT.icao} GROUND CHART · wind ${g.windText()} · right-click a holding point or stand to taxi the selected aircraft`, 12, r.h - 14);
+    ctx.fillText(`${AIRPORT.icao} GROUND CHART · wind ${g.windText()} · select an aircraft, click taxiways in order, then a holding point or stand`, 12, r.h - 14);
   }
 
   drawAircraft(ac, p) {

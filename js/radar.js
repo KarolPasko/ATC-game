@@ -50,6 +50,7 @@ class Radar {
 
   // Tower works a close-in view; approach the whole terminal area.
   zoomFor(pos) {
+    if (pos === 'GND') { this.groundView.fit(); return; }
     const range = pos === 'TWR' ? 14 : 48;
     this.view.cx = pos === 'TWR' ? 1 : 0;
     this.view.cy = 0;
@@ -113,7 +114,10 @@ class Radar {
           this.mouse.sx = e.offsetX; this.mouse.sy = e.offsetY;
         }
       }
-      const overTarget = g.viewMode === 'ground' ? g.selected && this.groundView.hitNode(e.offsetX, e.offsetY) : g.selected && this.hitFix(e.offsetX, e.offsetY);
+      const gv = this.groundView;
+      const overTarget = g.viewMode === 'ground'
+        ? gv.canBuild(g.selected) && (gv.hitNode(e.offsetX, e.offsetY) || gv.hitEdge(e.offsetX, e.offsetY))
+        : g.selected && this.hitFix(e.offsetX, e.offsetY);
       c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || overTarget ? 'pointer' : 'crosshair';
     });
     c.addEventListener('pointerleave', () => { if (!this.mouse.down) this.mouse.x = -1; });
@@ -216,6 +220,7 @@ class Radar {
   closeMenu() { if (this.menu) this.menu.hidden = true; }
 
   click(sx, sy) {
+    if (this.game.viewMode === 'ground') return this.groundView.click(sx, sy);
     const ac = this.hitAircraft(sx, sy);
     this.game.select(ac || null);
   }

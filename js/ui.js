@@ -168,12 +168,17 @@ class UI {
       const btn = (label, cmd) => `<button data-cmd="${esc(cmd)}">${esc(label)}</button>`;
       if (!this.game.userOwns(ac)) {
         quick = `<span class="notmine">With ${esc(POSITIONS[ac.owner].name)}${ac.owner !== 'CTR' ? ' (AI)' : ''}</span>`;
+      } else if (ac.isArr && ac.state === 'taxi' && ac.owner === 'TWR' && this.game.position === 'TWR') {
+        quick = btn('Contact Ground', 'ho');
       } else if (['stand', 'pushback', 'taxi'].includes(ac.state)) {
         if (!ac.isArr && !ac.cleared) quick += btn('CAF', 'caf');
-        if (ac.state === 'stand' && !ac.isArr) quick += btn('Pushback', 'pb');
+        if (ac.state === 'stand' && !ac.isArr) quick += btn('Push, face east', 'pb e') + btn('Push, face west', 'pb w');
         if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, 'taxi') + btn('Taxi…', 'taxi ');
         if (ac.state === 'taxi' && ac.taxiPath.length) quick += ac.holdPos ? btn('Continue', 'cont') : btn('Hold position', 'hpos');
-        quick += btn('Ground chart', '.gnd');
+        if (!ac.isArr && ac.owner === 'GND' && this.game.position === 'GND') quick += btn('Contact Tower', 'ho');
+        if (this.game.viewMode !== 'ground') quick += btn('Ground chart', '.gnd');
+      } else if (ac.state === 'ground' && ac.owner === 'GND' && this.game.position === 'GND') {
+        quick = btn('Contact Tower', 'ho') + btn('Taxi…', 'taxi ');
       } else if (ac.state === 'ground' || ac.state === 'lineup') {
         quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
       } else if (ac.state === 'air') {

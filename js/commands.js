@@ -2,8 +2,8 @@
 // e.g.  BAW123 h 270 a 5000 s 210     |    i 26L    |    EZY45 caf    |    dct NORAX
 const COMMAND_HELP = [
   ['CAF', 'Cleared as filed (IFR clearance, SID, squawk, climb ' + SID_TOP + ')'],
-  ['PB', 'Pushback (off the stand onto the apron taxilane)'],
-  ['TAXI [A7|26R|12] [VIA P J3 A]', 'Taxi to a holding point / runway / stand, optionally via taxiways'],
+  ['PB [E|W]', 'Pushback, ending up facing east or west'],
+  ['TAXI [A7|26R|12] [VIA P J3 A]', 'Taxi to a holding point / runway / stand, via the taxiways in that order (or click them on the ground chart)'],
   ['HPOS / CONT', 'Hold position / continue taxi'],
   ['LU [rwy]', 'Line up and wait'],
   ['CTO [rwy]', 'Cleared for take-off'],
@@ -18,11 +18,11 @@ const COMMAND_HELP = [
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
   ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm'],
-  ['HO', 'Hand off: TWR→Departure, Approach→Tower (when on the ILS), Departure→Control'],
+  ['HO', 'Transfer: Ground→Tower (departures), Tower→Ground (vacated arrivals), Tower→Departure, Approach→Tower, Departure→Control'],
   ['SQ 4521', 'Squawk code'],
   ['DEL', 'Delete aircraft'],
   ['.pause  .speed 2', 'Pause / simulation rate (1, 2, 4)'],
-  ['.pos twr|app|all', 'Switch controller position (the other one is flown by AI)'],
+  ['.pos gnd|twr|app|all', 'Switch controller position (the other one is flown by AI)'],
   ['.gnd / .radar', 'Show the ground (taxi) chart / the radar scope'],
   ['.autotaxi', 'Toggle automatic taxiing of your aircraft'],
   ['.config 26 / 08', 'Change runway configuration'],
@@ -233,23 +233,29 @@ class CommandProcessor {
         ac.goAround(g, 'going around');
         return null;
       case 'HO': {
-        if (!ac.airborne) return 'unable, we are on the ground';
         if (ac.handedOff) return 'already with next sector';
         let next = null;
-        if (ac.owner === 'TWR') next = ac.isArr ? null : 'APP';
+        if (ac.owner === 'GND') next = !ac.isArr && ac.onGround() ? 'TWR' : null;
+        else if (ac.owner === 'TWR') next = ac.isArr ? (ac.state === 'taxi' || ac.state === 'parked' ? 'GND' : null) : ac.airborne ? 'APP' : null;
         else if (ac.owner === 'APP') next = ac.isArr ? 'TWR' : 'CTR';
-        if (g.position === 'ALL' && !this.opts.ai) next = ac.isArr ? null : 'CTR';
-        if (!next) return ac.isArr ? 'unable, we are already with tower for landing' : 'unable';
-        if (next === 'TWR' && !ac.ils) return 'unable, we are not cleared for an approach yet';
+        if (g.position === 'ALL' && !this.opts.ai) next = !ac.isArr && ac.airborne ? 'CTR' : null;
+        if (!next) {
+          if (ac.isArr && ac.airborne) return 'unable, we are already with tower for landing';
+          if (ac.isArr && ac.state === 'landed') return 'unable, still rolling out';
+          if (!ac.isArr && ac.owner === 'TWR' && !ac.airborne) return 'unable, we are waiting for departure';
+          return 'unable';
+        }
+        if (next === 'TWR' && ac.isArr && !ac.ils) return 'unable, we are not cleared for an approach yet';
+        if (next === 'CTR' && !ac.airborne) return 'unable, we are on the ground';
         g.transfer(ac, next, { ai: !!this.opts.ai });
         return `contact ${POSITIONS[next].call} ${POSITIONS[next].freq}, good day`;
       }
       case 'PB': {
         if (ac.state !== 'stand') return 'unable, we are not on stand';
         if (!ac.isArr && !ac.cleared) return 'unable, we need our clearance first';
-        ac.pushback();
-        const hp = GROUND.nodes[GROUND.holdingPoints[ac.rwy]], st = GROUND.stands[ac.stand];
-        return `pushback approved, facing ${hp.u > st.u ? 'east' : 'west'}`;
+        const face = this.optional(cur, (t) => ({ E: 'E', EAST: 'E', W: 'W', WEST: 'W' })[t] || null);
+        const f = ac.pushback(face);
+        return `pushback approved, facing ${f === 'E' ? 'east' : 'west'}`;
       }
       case 'TAXI': {
         if (!['stand', 'pushback', 'taxi', 'ground'].includes(ac.state)) return ac.state === 'landed' ? 'unable, still rolling out' : 'unable';
@@ -259,13 +265,23 @@ class CommandProcessor {
         let target = this.optional(cur, (t) => {
           if (GROUND.nodes[t]?.kind === 'hold') return t;
           const rw = parseRunway(t);
-          if (rw && !ac.isArr) return rw === ac.rwy ? GROUND.holdingPoints[rw] : null;
+          if (rw && !ac.isArr) return GROUND.holdingPoints[rw];
           const m = t.match(/^(?:S|ST|STAND)?(\d{1,2})$/);
           if (m && GROUND.stands[+m[1]]) return `ST${+m[1]}`;
           return null;
         });
         if (!target) target = ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.holdingPoints[ac.rwy];
         if (!target) return 'say again taxi instructions?';
+        // Taxiing to the other parallel runway's holding point: switch runway if a matching departure exists.
+        const newRwy = !ac.isArr && Object.keys(GROUND.holdingPoints).find((r) => GROUND.holdingPoints[r] === target && RUNWAYS[r].heading === ac.runway.heading);
+        if (newRwy && newRwy !== ac.rwy) {
+          const exit = ac.route[ac.route.length - 1];
+          const sid = PROCS[g.config].sids.find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit);
+          if (!sid) return `unable, no ${exit} departure from runway ${newRwy}`;
+          Object.assign(ac, { rwy: newRwy, sid: sid.name, route: sid.fixes.slice() });
+        } else if (!ac.isArr && GROUND.nodes[target]?.kind === 'hold' && !newRwy && Object.values(GROUND.holdingPoints).includes(target)) {
+          return `unable, holding point ${target} is not for our departure runway`;
+        }
         if (target.startsWith('ST')) {
           const num = +target.slice(2);
           if (!ac.isArr) return 'unable, we are a departure';
@@ -277,7 +293,8 @@ class CommandProcessor {
         const r = ac.startTaxi(target, via);
         if (!r) return 'unable, no taxi route';
         const names = r.names.filter((n, i) => !(i === r.names.length - 1 && n === target));
-        const dest = target.startsWith('ST') ? `stand ${ac.stand}` : `holding point ${target}, runway ${ac.rwy}`;
+        const isRwyHp = Object.values(GROUND.holdingPoints).includes(target);
+        const dest = target.startsWith('ST') ? `stand ${ac.stand}` : isRwyHp ? `holding point ${target}, runway ${ac.rwy}` : `holding point ${target}`;
         return `${ac.state === 'pushback' ? 'pushback and ' : ''}taxi to ${dest}${names.length ? ' via ' + names.join(', ') : ''}`;
       }
       case 'HPOS':
@@ -292,7 +309,7 @@ class CommandProcessor {
         if (!ac.isArr || !ac.airborne) return 'unable';
         if (!ac.ils) return 'unable, we are not cleared for an approach';
         if (ac.landClr) return 'already cleared to land';
-        if (!this.opts.ai) g.checkRunwayClear(ac);
+        if (!this.opts.ai) g.warnRunwayOccupied(ac);
         ac.landClr = true;
         return `cleared to land runway ${ac.rwy}, wind ${g.windText()}`;
       }
@@ -390,7 +407,7 @@ class CommandProcessor {
       case 'autotaxi': g.autoTaxi = !g.autoTaxi; g.log(`Automatic taxi ${g.autoTaxi ? 'on' : 'off'}`, 'sys'); g.ui.update(); break;
       case 'pos': case 'position': {
         const p = a.toUpperCase();
-        if (['ALL', 'TWR', 'APP'].includes(p)) g.setPosition(p); else g.log('Usage: .pos twr | app | all', 'err');
+        if (['ALL', 'GND', 'TWR', 'APP'].includes(p)) g.setPosition(p); else g.log('Usage: .pos gnd | twr | app | all', 'err');
         break;
       }
       default: g.log(`Unknown system command ".${cmd}" — try .help`, 'err');
