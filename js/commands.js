@@ -166,15 +166,26 @@ class CommandProcessor {
       case 'I': case 'APP': {
         const rwy = parseRunway(arg());
         if (!rwy) return 'say again runway?';
+        // Optional entry fix: "app 26R NORAX" or "app 26R via NORAX".
+        let via = null;
+        if (cmd === 'APP') {
+          if (cur.peek() === 'VIA') { cur.i++; via = cur.next() || ''; }
+          else via = this.optional(cur, (t) => (FIXES[t] ? t : null));
+        }
         if (!ac.isArr) return 'unable, we are a departure';
         if (this.needAir(ac)) return this.needAir(ac);
+        if (via !== null && !this.approachVia(ac, rwy, via)) {
+          const a = APPROACHES[rwy];
+          return `unable${via ? ` ${via}` : ''}, expect the runway ${rwy} approach via ${a.outer}, ${a.straightIn} or ${a.if}`;
+        }
         if (rwy !== ac.rwy) { ac.rwy = rwy; ac.est = ac.gs = false; }
         ac.ils = true;
         ac.prevLateral = null;
         ac.endOfRouteWarned = false;
         if (cmd === 'APP') {
-          this.assignApproach(ac, rwy);
-          return `cleared ILS approach runway ${rwy} via ${ac.route[0]}`;
+          if (ac.est) return `cleared ILS approach runway ${rwy}, established`;
+          const entry = this.assignApproach(ac, rwy, via);
+          return `cleared ILS approach runway ${rwy} via ${entry}`;
         }
         return `cleared ILS runway ${rwy}`;
       }
@@ -338,6 +349,8 @@ class CommandProcessor {
   directTo(ac, name) {
     const idx = ac.route.indexOf(name);
     if (idx >= 0) ac.route = ac.route.slice(idx);
+    // An approach fix of the arrival's own runway: continue with that approach from there.
+    else if (ac.isArr && approachOf(name)?.rwy === ac.rwy) ac.route = approachFrom(ac.rwy, name);
     else {
       // Off-route fix: fly to it, then rejoin the route at the nearest point ahead.
       const fix = FIXES[name];
@@ -362,18 +375,69 @@ class CommandProcessor {
     }
   }
 
-  // Build the approach route IAF→IF→FAF from where the aircraft is.
-  assignApproach(ac, rwy) {
-    const [iaf, ifx, faf] = APPROACHES[rwy];
-    const { along } = ac.finalGeometry(RUNWAYS[rwy]);
-    let start = 0;
-    if (Geo.dist(ac, FIXES[ifx]) < Geo.dist(ac, FIXES[iaf]) && along > 8) start = 1;
-    const ifAlong = RUNWAYS[rwy].phys === 'N' ? 14 : 11;
-    if (along < ifAlong && along > 6.5) start = 2;
-    ac.route = [iaf, ifx, faf].slice(start);
+  // Route for "app RWY via FIX": direct to one of the runway's approach fixes, or along the current route
+  // from a fix on it that leads into the approach. Null if the fix can't be used.
+  approachVia(ac, rwy, via) {
+    if (approachFrom(rwy, via)) return approachFrom(rwy, via);
+    const i = ac.route.indexOf(via);
+    return i >= 0 ? this.intoApproach(ac.route.slice(i), rwy) : null;
+  }
+
+  // A route cut off where it reaches the runway's approach, continuing with that approach; null if it never does.
+  intoApproach(route, rwy) {
+    const k = route.findIndex((n) => approachFrom(rwy, n));
+    return k < 0 ? null : route.slice(0, k).concat(approachFrom(rwy, route[k]));
+  }
+
+  // Approach entries in order of preference from where the aircraft is: the straight-in IAF from behind the
+  // final, the outer IAF from the outer side, the IF from abeam or inside the T, the FAF when already close in.
+  entryCandidates(ac, rwy) {
+    const a = APPROACHES[rwy];
+    const { along, lateral } = ac.finalGeometry(RUNWAYS[rwy]);
+    const outer = lateral * a.side; // positive on the outer side
+    const cone = (from) => along > from + 1 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - from);
+    const A = a.ifAlong;
+    if (cone(A + 6)) return [a.straightIn, a.if, a.outer, a.faf];
+    if (cone(A)) return [a.if, a.straightIn, a.outer, a.faf];
+    if (along >= A - 2) return outer >= 4 ? [a.outer, a.if, a.straightIn, a.faf] : [a.if, a.outer, a.straightIn, a.faf];
+    if (along >= 8.8 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - 6.3)) return [a.faf, a.if, a.outer, a.straightIn];
+    return outer > 0 ? [a.outer, a.if, a.faf, a.straightIn] : [a.if, a.outer, a.faf, a.straightIn];
+  }
+
+  // Fly a silent copy of the aircraft along `route` with the approach clearance: does it get established
+  // (outside 4 nm) and land without going around?
+  trialApproach(ac, rwy, route) {
+    let wentAround = false, estAlong = null;
+    const game = Object.assign({}, SILENT_GAME, { onGoAround() { wentAround = true; } });
+    const g = Object.assign(Object.create(Aircraft.prototype), ac, {
+      route: route.slice(), rwy, mode: 'route', hold: null, leg: null, app: true, ils: true, est: false, gs: false,
+      landClr: true, trail: [], endOfRouteWarned: true, prevLateral: null,
+    });
+    for (let t = 0; t < 2400 && g.state === 'air'; t++) {
+      g.update(1, game);
+      if (wentAround || Math.hypot(g.x, g.y) > AIRPORT.radarRange) return false;
+      if (g.est && estAlong === null) estAlong = g.finalGeometry().along;
+    }
+    return g.state === 'landed' && estAlong >= 4;
+  }
+
+  // Set up the approach clearance and return the fix the approach is flown from. Without a fix given, a route
+  // that already leads into the approach (the STAR, or the hold fix onwards) is kept; otherwise the pilot picks
+  // the preferred entry for the aircraft's position that a quick trial shows leads to a stable approach.
+  assignApproach(ac, rwy, via = null) {
+    let route = via ? this.approachVia(ac, rwy, via) : null;
+    if (!route) {
+      let kept = null;
+      if (ac.mode === 'route') kept = this.intoApproach(ac.route, rwy);
+      if (ac.mode === 'hold' && ac.route.includes(ac.hold.fix)) kept = this.intoApproach(ac.route.slice(ac.route.indexOf(ac.hold.fix)), rwy);
+      const options = (kept ? [kept] : []).concat(this.entryCandidates(ac, rwy).map((f) => approachFrom(rwy, f)));
+      route = options.find((r) => this.trialApproach(ac, rwy, r)) || options[0];
+    }
+    ac.route = route;
     ac.mode = 'route';
     ac.hold = null;
     ac.app = true;
+    return route.find((n) => approachFrom(rwy, n));
   }
 
   system(t) {

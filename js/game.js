@@ -120,15 +120,13 @@ class Game {
     if (!stars.length) return;
     const star = rnd(stars);
     const entry = FIXES[star.fixes[0]];
-    const [iaf, ifx, faf] = APPROACHES[star.rwy];
-    const route = star.fixes.slice(1);
-    if (route[route.length - 1] === iaf) route.push(ifx, faf);
+    const route = starRoute(star);
     const alt = 11000 + Math.floor(Math.random() * 6) * 1000;
     const type = rnd(TYPE_WEIGHTS);
     const ac = new Aircraft({
       cs: this.newCallsign(), type, kind: 'arr',
       x: entry.x, y: entry.y, alt, tgtAlt: alt, spd: 280,
-      rwy: star.rwy, star: star.name, route,
+      rwy: star.rwy, star: star.name, route, altCons: star.alts || {},
       orig: rnd(OUTSTATIONS[FIX_DIRECTION[star.fixes[0]]]), dest: AIRPORT.icao,
       squawk: this.newSquawk(), cleared: true, owner: 'APP',
     });

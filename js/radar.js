@@ -169,9 +169,8 @@ class Radar {
       items.push([`Hold · inbound ${Geo.fmtHdg(inb)}° · right turns`, `${cs} hold ${fix.name} ${Geo.fmtHdg(inb)} R`]);
       items.push([`Hold · inbound ${Geo.fmtHdg(inb)}° · left turns`, `${cs} hold ${fix.name} ${Geo.fmtHdg(inb)} L`]);
       if (ac.isArr) {
-        for (const [rwy, fixes] of Object.entries(APPROACHES)) {
-          if (fixes.slice(0, 2).includes(fix.name)) items.push([`Cleared approach ${rwy} via ${fix.name}`, `${cs} dct ${fix.name} app ${rwy}`]);
-        }
+        const a = approachOf(fix.name);
+        if (a && fix.name !== a.faf) items.push([`Cleared approach ${a.rwy} via ${fix.name}`, `${cs} app ${a.rwy} via ${fix.name}`]);
       }
     }
     const info = HOLDS[fix.name] ? `min hold ${ac.altText(HOLDS[fix.name].minAlt)}` : fix.alt ? `at ${ac.altText(fix.alt)}` : fix.type.toUpperCase();
@@ -323,7 +322,7 @@ class Radar {
   drawProcedures() {
     const pr = PROCS[this.game.config];
     for (const s of pr.stars) {
-      const fixes = s.fixes.concat(APPROACHES[s.rwy].slice(1)).map((n) => FIXES[n]);
+      const fixes = [s.fixes[0], ...starRoute(s)].map((n) => FIXES[n]);
       this.polyline(fixes.concat([RUNWAYS[s.rwy].thr]), COLORS.arr, 1, [6, 4], 0.25);
     }
     for (const s of pr.sids) {
@@ -336,17 +335,18 @@ class Radar {
     const ctx = this.ctx;
     for (const id of this.game.activeRunways()) {
       const r = RUNWAYS[id];
-      const far = approachPoint(id, 15);
+      const a = APPROACHES[id];
+      const far = approachPoint(id, a.ifAlong + 6);
       this.polyline([r.thr, far], COLORS.centreline, 1, [4, 4]);
       // nm ticks, longer every 5 nm
-      for (let d = 1; d <= 15; d++) {
+      for (let d = 1; d <= Math.floor(a.ifAlong); d++) {
         const p = approachPoint(id, d);
         const len = d % 5 === 0 ? 0.6 : 0.25;
         this.polyline([Geo.offset(p, r.heading + 90, len), Geo.offset(p, r.heading - 90, len)], COLORS.centreline, 1);
       }
-      // approach path IAF -> IF -> FAF
-      const app = APPROACHES[id].map((n) => FIXES[n]);
-      this.polyline(app, 'rgba(200,170,255,0.22)', 1, [2, 4]);
+      // T-bar: outer IAF -> IF, straight-in IAF -> IF -> FAF
+      this.polyline([FIXES[a.outer], FIXES[a.if]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
+      this.polyline([FIXES[a.straightIn], FIXES[a.if], FIXES[a.faf]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
     }
     ctx.setLineDash([]);
   }
@@ -380,7 +380,7 @@ class Radar {
     ctx.font = '10px "JetBrains Mono", monospace';
     // IF/FAF/SID fixes are only shown for runways in use.
     const active = new Set();
-    for (const id of this.game.activeRunways()) { APPROACHES[id].forEach((n) => active.add(n)); active.add(SID_FIRST[id]); }
+    for (const id of this.game.activeRunways()) { const a = APPROACHES[id]; [...a.iafs, a.if, a.faf, SID_FIRST[id]].forEach((n) => active.add(n)); }
     for (const f of Object.values(FIXES)) {
       const p = this.toScreen(f);
       if (p.x < -40 || p.y < -40 || p.x > this.w + 40 || p.y > this.h + 40) continue;

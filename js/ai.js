@@ -174,7 +174,7 @@ class AIController {
         if (rem < 16) { if (gap < n && ac.tgtSpd !== ac.perf.vapp + 10) this.cmd(ac, `s ${ac.perf.vapp + 10}`); continue; }
         if (ac.est) continue;
         if (gap < n - 2 && rem > 20 && ac.route.length) {
-          const fix = ac.route.find((f) => HOLDS[f]) || APPROACHES[ac.rwy][0];
+          const fix = ac.route.find((f) => HOLDS[f]) || APPROACHES[ac.rwy].outer;
           const stack = g.aircraft.filter((o) => o.mode === 'hold' && o.hold?.fix === fix).length;
           this.cmd(ac, `hold ${fix}`);
           ac.app = false;

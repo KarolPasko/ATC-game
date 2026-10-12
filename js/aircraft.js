@@ -145,38 +145,72 @@ class Aircraft {
       return;
     }
 
+    // A leg flown after a hold or vectors starts from wherever the aircraft rejoins its route.
+    if (this.mode !== 'route') this.leg = null;
     if (this.mode === 'hold') return this.flyHold(dt, game);
 
     if (this.mode === 'route') {
       if (!this.route.length) { this.mode = 'heading'; this.tgtHdg = this.hdg; return; }
-      const wp = FIXES[this.route[0]];
-      const d = Geo.dist(this, wp);
-      const brg = Geo.bearing(this, wp);
-      this.tgtHdg = this.headingFor(brg);
-      // Fly-by waypoints: start the turn early so the aircraft rolls out on the next leg.
-      let lead = 0.5;
-      if (this.route[1]) {
-        const next = FIXES[this.route[1]];
-        const turn = Math.abs(Geo.diff(brg, Geo.bearing(wp, next)));
-        lead = Geo.clamp(this.turnRadius() * Math.tan(Geo.rad(Math.min(turn, 120) / 2)), 0.3, 4);
-      }
-      if (d < lead) {
-        this.route.shift();
-        if (!this.route.length) {
-          this.mode = 'heading';
-          this.tgtHdg = this.hdg;
-          if (this.isArr && !this.ils && !this.endOfRouteWarned) {
-            this.endOfRouteWarned = true;
-            this.say(game, `end of route at ${wp.name}, maintaining heading ${Geo.fmtHdg(this.hdg)}, request approach clearance`);
-          }
-        }
-      }
-      // Cleared for a procedure: descend via the published fix altitudes.
+      this.followRoute(game);
+      // Cleared for a procedure: descend via the STAR and approach fix altitudes.
       if (this.app) {
-        const next = this.route.find((n) => FIXES[n].alt);
-        if (next && FIXES[next].alt < this.tgtAlt) this.tgtAlt = FIXES[next].alt;
+        const next = this.route.find((n) => this.fixAlt(n));
+        if (next && this.fixAlt(next) < this.tgtAlt) this.tgtAlt = this.fixAlt(next);
       }
     }
+  }
+
+  // Altitude constraint at a route fix: the aircraft's STAR constraint, else the published approach altitude.
+  fixAlt(name) { return this.altCons?.[name] ?? FIXES[name]?.alt; }
+
+  // Lateral navigation along the route: track each leg, start fly-by turns early so the aircraft rolls out on
+  // the next leg, and sequence a waypoint once it is passed abeam so a fix is never orbited.
+  followRoute(game) {
+    const wp = FIXES[this.route[0]];
+    // The leg starts at the fix just sequenced, or where the aircraft was when it got a new waypoint.
+    if (!this.leg || this.leg.to !== this.route[0]) this.leg = { to: this.route[0], from: { x: this.x, y: this.y } };
+    const from = this.leg.from;
+    const len = Geo.dist(from, wp);
+    const d = Geo.dist(this, wp);
+    const course = len > 0.1 ? Geo.bearing(from, wp) : Geo.bearing(this, wp);
+    const u = Geo.vec(course);
+    const prog = (this.x - from.x) * u.x + (this.y - from.y) * u.y; // distance flown along the leg
+    const r = this.turnRadius();
+
+    // Fly-by: lead = r·tan(Δ/2), at most 3 nm and 40% of the next leg; turns over 120° fly over the fix.
+    let lead = 0.2;
+    const next = this.route[1] && FIXES[this.route[1]];
+    if (next) {
+      const turn = Math.abs(Geo.diff(course, Geo.bearing(wp, next)));
+      if (turn <= 120) lead = Geo.clamp(r * Math.tan(Geo.rad(turn / 2)), 0.2, Math.min(3, 0.4 * Geo.dist(wp, next)));
+    }
+    if (d <= lead || (len > 0.1 && prog >= len)) {
+      this.route.shift();
+      if (this.route.length) {
+        this.leg = { to: this.route[0], from: { x: wp.x, y: wp.y } };
+        return this.followRoute(game);
+      }
+      this.leg = null;
+      this.mode = 'heading';
+      this.tgtHdg = this.hdg;
+      if (this.isArr && !this.ils && !this.endOfRouteWarned) {
+        this.endOfRouteWarned = true;
+        this.say(game, `end of route at ${wp.name}, maintaining heading ${Geo.fmtHdg(this.hdg)}, request approach clearance`);
+      }
+      return;
+    }
+
+    // Steer for a point ahead on the leg, so the aircraft converges on the track rather than chasing the fix.
+    const look = Math.max(1.5, 1.5 * r);
+    const aim = len > 0.1 && len - prog > look ? Geo.offset(from, course, Math.max(0, prog) + look) : wp;
+    const brg = Geo.bearing(this, aim);
+    // A point inside the turning circle can't be reached by turning towards it: hold the heading until it can.
+    const side = Geo.diff(this.hdg, brg) >= 0 ? 1 : -1;
+    if (Math.abs(Geo.diff(this.hdg, brg)) > 20 && Geo.dist(Geo.offset(this, this.hdg + side * 90, r), aim) < r * 0.95) {
+      this.tgtHdg = this.hdg;
+      return;
+    }
+    this.tgtHdg = this.headingFor(brg);
   }
 
   checkLocCapture(game) {
@@ -186,6 +220,10 @@ class Aircraft {
     const crossed = this.prevLateral !== null && Math.sign(lateral) !== Math.sign(this.prevLateral);
     this.prevLateral = lateral;
     if (along < 3 || along > 30 || Math.abs(theta) > 110) return; // no intercepts inside 3 nm
+    if (this.mode === 'hold') return; // straight-in IAF holds sit on the extended centreline
+    // Flying the published approach: the localizer is joined from the IF on, not on the way to the IAF.
+    const a = APPROACHES[this.rwy];
+    if (this.app && this.mode === 'route' && this.route.length && this.route[0] !== a.if && this.route[0] !== a.faf) return;
     const toward = (lateral > 0 && theta < 0) || (lateral < 0 && theta > 0);
     const lead = this.turnRadius() * (1 - Math.cos(Geo.rad(theta))) + 0.15;
     if ((Math.abs(lateral) <= lead && (toward || Math.abs(lateral) < 0.15)) || crossed) {

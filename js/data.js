@@ -58,9 +58,7 @@ addFix('SUDAN', { x: 10, y: -43 }, 'exit');
 addFix('WOLFE', { x: -43, y: 12 }, 'exit');
 // Enroute / transition fixes
 addFix('SOTAX', { x: 2, y: 25 }, 'enroute');
-addFix('GIBRA', { x: 26, y: 4 }, 'enroute');
 addFix('NEKOS', { x: 0, y: -25 }, 'enroute');
-addFix('ULMAR', { x: -26, y: 0 }, 'enroute');
 addFix('FOXEN', { x: -6, y: -14 }, 'enroute');
 addFix('NIBEX', { x: -13, y: 15 }, 'enroute');
 addFix('ETRAX', { x: 13, y: 27 }, 'enroute');
@@ -76,10 +74,8 @@ addFix('GOLVA', { x: 12, y: 15 }, 'enroute');
 addFix('HEXOR', { x: 25, y: -13 }, 'enroute');
 addFix('IRVAN', { x: -9, y: -32 }, 'enroute');
 addFix('JUPAL', { x: 36, y: -5 }, 'exit');
-addFix('KUTRA', { x: -22, y: -10 }, 'enroute');
 addFix('LOVIS', { x: -19, y: 6 }, 'enroute');
 addFix('MOSKA', { x: 6, y: -11 }, 'enroute');
-addFix('NURPA', { x: 23, y: 19 }, 'enroute');
 addFix('OSTEP', { x: -4, y: 35 }, 'enroute');
 addFix('PRAVO', { x: 16, y: -34 }, 'enroute');
 addFix('RUSKO', { x: -28, y: -38 }, 'entry');
@@ -92,22 +88,59 @@ addFix('RVW', { x: 1.5, y: -2.4 }, 'vor');
 addFix('OKR', { x: 27, y: 26 }, 'vor');
 addFix('DXT', { x: -24, y: -25 }, 'vor');
 
-// Approach fixes: IAF (15 nm, 8 nm offset), IF (11 nm), FAF (6.3 nm, on the 3° glideslope at 2000 ft)
-const APPROACHES = {
-  '26R': ['NORAX', 'MELAN', 'RIVOS'],
-  '26L': ['SUREK', 'TOBEK', 'LONKA'],
-  '08L': ['KELVO', 'PIRAM', 'ODINA'],
-  '08R': ['ZUBIN', 'HALOR', 'ESKIN'],
+// ---- Approaches: an RNAV "T-bar" to the ILS for every runway end ----
+//   FAF  on the centreline at 6.3 nm, 2000 ft (on the 3° glideslope).
+//   IF   on the centreline: 11 nm / 3000 ft for the south runways, 14 nm / 4000 ft for the north ones, so arrivals
+//        for the two parallels keep 1000 ft apart until established, and always join the glideslope from below.
+//   IAFs 6 nm from the IF: a straight-in IAF on the extended centreline, and an outer IAF exactly abeam the IF on the
+//        side away from the parallel runway (so the turn at the IF is 90°). South 4000 ft, north 5000 ft.
+const APPROACHES = {};
+const APPROACH_NAMES = {
+  '26R': { outer: 'NORAX', straightIn: 'MAVEK', if: 'MELAN', faf: 'RIVOS' },
+  '26L': { outer: 'SUREK', straightIn: 'LUTOS', if: 'TOBEK', faf: 'LONKA' },
+  '08L': { outer: 'KELVO', straightIn: 'PELOR', if: 'PIRAM', faf: 'ODINA' },
+  '08R': { outer: 'ZUBIN', straightIn: 'HUBAN', if: 'HALOR', faf: 'ESKIN' },
 };
-const IAF_SIDE = { '26R': 8, '26L': -8, '08L': -8, '08R': 8 }; // outer side of each runway
-// North runways (08L/26R) fly their intermediate approach 1000 ft higher, so arrivals for the
-// two parallels have vertical separation until established on their localizers.
-for (const [rwy, [iaf, ifx, faf]] of Object.entries(APPROACHES)) {
-  const north = RUNWAYS[rwy].phys === 'N';
-  addFix(iaf, approachPoint(rwy, north ? 17 : 15, IAF_SIDE[rwy]), 'iaf', north ? 5000 : 4000);
-  addFix(ifx, approachPoint(rwy, north ? 14 : 11, 0), 'if', north ? 4000 : 3000);
-  addFix(faf, approachPoint(rwy, 6.3, 0), 'faf', 2000);
+for (const [rwy, n] of Object.entries(APPROACH_NAMES)) {
+  const r = RUNWAYS[rwy];
+  const north = r.phys === 'N';
+  const ifAlong = north ? 14 : 11;
+  const iafAlt = north ? 5000 : 4000;
+  // +1 when the outer side is to the right of the final approach course.
+  const side = north === (r.heading === 260) ? 1 : -1;
+  addFix(n.faf, approachPoint(rwy, 6.3), 'faf', 2000);
+  addFix(n.if, approachPoint(rwy, ifAlong), 'if', north ? 4000 : 3000);
+  addFix(n.outer, approachPoint(rwy, ifAlong, 6 * side), 'iaf', iafAlt);
+  addFix(n.straightIn, approachPoint(rwy, ifAlong + 6), 'iaf', iafAlt);
+  APPROACHES[rwy] = { rwy, iafs: [n.outer, n.straightIn], outer: n.outer, straightIn: n.straightIn, if: n.if, faf: n.faf, ifAlong, side };
 }
+
+// The approach fixes from `fix` (an IAF, the IF or the FAF of that runway) down to the FAF, or null.
+function approachFrom(rwy, fix) {
+  const a = APPROACHES[rwy];
+  if (!a) return null;
+  if (fix === a.faf) return [a.faf];
+  if (fix === a.if) return [a.if, a.faf];
+  return a.iafs.includes(fix) ? [fix, a.if, a.faf] : null;
+}
+// Which runway's approach a fix belongs to (null for other fixes).
+function approachOf(fix) {
+  return Object.values(APPROACHES).find((a) => a.iafs.includes(fix) || a.if === fix || a.faf === fix) || null;
+}
+
+// STAR feeder fixes: the straight-in IAFs are joined on a 45° cut from the side away from the parallel runway,
+// 8 nm before the IAF, so the two straight-in streams never meet.
+function feederFix(name, rwy) {
+  const a = APPROACHES[rwy];
+  const r = RUNWAYS[rwy];
+  addFix(name, Geo.offset(FIXES[a.straightIn], r.heading + 180 - 45 * a.side, 8), 'enroute');
+}
+feederFix('NURPA', '26R');
+feederFix('GIBRA', '26L');
+feederFix('ULMAR', '08L');
+feederFix('KUTRA', '08R');
+// Lead-in to the 08L outer IAF, on the extension of the IAF→IF leg.
+addFix('RAXOL', Geo.offset(FIXES.KELVO, Geo.bearing(FIXES.PIRAM, FIXES.KELVO), 12), 'enroute');
 
 // SID first fixes: 4 nm beyond the departure end, splaying 15° away from the parallel runway
 // so simultaneous departures diverge immediately.
@@ -119,20 +152,23 @@ for (const [rwy, name] of Object.entries(SID_FIRST)) {
 }
 
 // ---- Procedures per runway configuration ----
+// STARs end at an IAF and continue with that runway's approach. Arrivals from the approach end use the
+// straight-in IAF, the others the outer IAF; north arrivals land on the north runway, south ones on the south.
+// `alts`: altitude constraints flown when "descending via" after the approach clearance (around 25 nm out).
 const PROCS = {
   '26': {
     stars: [
-      { name: 'BOGNA1R', rwy: '26R', fixes: ['BOGNA', 'OSTEP', 'SOTAX', 'GOLVA', 'NORAX'] },
-      { name: 'MIRLO1R', rwy: '26R', fixes: ['MIRLO', 'SOTAX', 'NORAX'] },
-      { name: 'TIMBA1R', rwy: '26R', fixes: ['TIMBA', 'NURPA', 'NORAX'] },
-      { name: 'LAMSO1L', rwy: '26L', fixes: ['LAMSO', 'GIBRA', 'SUREK'] },
-      { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'HEXOR', 'SUREK'] },
-      { name: 'DEXOR1L', rwy: '26L', fixes: ['DEXOR', 'NEKOS', 'SUREK'] },
-      { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'ULMAR', 'KUTRA', 'FOXEN', 'SUREK'] },
-      { name: 'TELBA1R', rwy: '26R', fixes: ['TELBA', 'OKR', 'NURPA', 'NORAX'] },
-      { name: 'FIRZO1R', rwy: '26R', fixes: ['FIRZO', 'ARKOS', 'ZEPRA', 'GOLVA', 'NORAX'] },
-      { name: 'RUSKO1L', rwy: '26L', fixes: ['RUSKO', 'IRVAN', 'MOSKA', 'SUREK'] },
-      { name: 'CORVU1L', rwy: '26L', fixes: ['CORVU', 'HEXOR', 'SUREK'] },
+      { name: 'BOGNA1R', rwy: '26R', fixes: ['BOGNA', 'SOTAX', 'NORAX'], alts: { SOTAX: 7000 } },
+      { name: 'MIRLO1R', rwy: '26R', fixes: ['MIRLO', 'ARKOS', 'SOTAX', 'NORAX'], alts: { SOTAX: 7000 } },
+      { name: 'FIRZO1R', rwy: '26R', fixes: ['FIRZO', 'ARKOS', 'SOTAX', 'NORAX'], alts: { SOTAX: 7000 } },
+      { name: 'TIMBA1R', rwy: '26R', fixes: ['TIMBA', 'NURPA', 'MAVEK'], alts: { NURPA: 7000 } },
+      { name: 'TELBA1R', rwy: '26R', fixes: ['TELBA', 'NURPA', 'MAVEK'], alts: { NURPA: 7000 } },
+      { name: 'LAMSO1L', rwy: '26L', fixes: ['LAMSO', 'GIBRA', 'LUTOS'], alts: { GIBRA: 7000 } },
+      { name: 'CORVU1L', rwy: '26L', fixes: ['CORVU', 'GIBRA', 'LUTOS'], alts: { GIBRA: 7000 } },
+      { name: 'KOPAS1L', rwy: '26L', fixes: ['KOPAS', 'HEXOR', 'SUREK'], alts: { HEXOR: 7000 } },
+      { name: 'DEXOR1L', rwy: '26L', fixes: ['DEXOR', 'NEKOS', 'SUREK'], alts: { NEKOS: 7000 } },
+      { name: 'RUSKO1L', rwy: '26L', fixes: ['RUSKO', 'IRVAN', 'NEKOS', 'SUREK'], alts: { NEKOS: 7000 } },
+      { name: 'VAREN1L', rwy: '26L', fixes: ['VAREN', 'DXT', 'NEKOS', 'SUREK'], alts: { NEKOS: 7000 } },
     ],
     sids: [
       { name: 'NOVAL2R', rwy: '26R', fixes: ['ROKEL', 'NIBEX', 'NOVAL'] },
@@ -147,17 +183,17 @@ const PROCS = {
   },
   '08': {
     stars: [
-      { name: 'BOGNA1D', rwy: '08L', fixes: ['BOGNA', 'SOTAX', 'KELVO'] },
-      { name: 'MIRLO1D', rwy: '08L', fixes: ['MIRLO', 'KELVO'] },
-      { name: 'TIMBA1D', rwy: '08L', fixes: ['TIMBA', 'SOTAX', 'KELVO'] },
-      { name: 'LAMSO1E', rwy: '08R', fixes: ['LAMSO', 'GIBRA', 'NEKOS', 'ZUBIN'] },
-      { name: 'KOPAS1E', rwy: '08R', fixes: ['KOPAS', 'NEKOS', 'ZUBIN'] },
-      { name: 'DEXOR1E', rwy: '08R', fixes: ['DEXOR', 'NEKOS', 'ZUBIN'] },
-      { name: 'VAREN1E', rwy: '08R', fixes: ['VAREN', 'ZUBIN'] },
-      { name: 'TELBA1D', rwy: '08L', fixes: ['TELBA', 'OKR', 'ETRAX', 'ZEPRA', 'KELVO'] },
-      { name: 'FIRZO1D', rwy: '08L', fixes: ['FIRZO', 'KELVO'] },
-      { name: 'RUSKO1E', rwy: '08R', fixes: ['RUSKO', 'DXT', 'ZUBIN'] },
-      { name: 'CORVU1E', rwy: '08R', fixes: ['CORVU', 'HEXOR', 'MOSKA', 'ZUBIN'] },
+      { name: 'BOGNA1D', rwy: '08L', fixes: ['BOGNA', 'SOTAX', 'KELVO'], alts: { SOTAX: 7000 } },
+      { name: 'TIMBA1D', rwy: '08L', fixes: ['TIMBA', 'SOTAX', 'KELVO'], alts: { SOTAX: 7000 } },
+      { name: 'TELBA1D', rwy: '08L', fixes: ['TELBA', 'OKR', 'SOTAX', 'KELVO'], alts: { SOTAX: 7000 } },
+      { name: 'MIRLO1D', rwy: '08L', fixes: ['MIRLO', 'RAXOL', 'KELVO'], alts: { RAXOL: 7000 } },
+      { name: 'FIRZO1D', rwy: '08L', fixes: ['FIRZO', 'ULMAR', 'PELOR'], alts: { ULMAR: 7000 } },
+      { name: 'VAREN1E', rwy: '08R', fixes: ['VAREN', 'KUTRA', 'HUBAN'], alts: { KUTRA: 7000 } },
+      { name: 'RUSKO1E', rwy: '08R', fixes: ['RUSKO', 'DXT', 'KUTRA', 'HUBAN'], alts: { KUTRA: 7000 } },
+      { name: 'KOPAS1E', rwy: '08R', fixes: ['KOPAS', 'NEKOS', 'ZUBIN'], alts: { NEKOS: 7000 } },
+      { name: 'DEXOR1E', rwy: '08R', fixes: ['DEXOR', 'NEKOS', 'ZUBIN'], alts: { NEKOS: 7000 } },
+      { name: 'LAMSO1E', rwy: '08R', fixes: ['LAMSO', 'HEXOR', 'FOXEN', 'ZUBIN'], alts: { HEXOR: 7000, FOXEN: 5000 } },
+      { name: 'CORVU1E', rwy: '08R', fixes: ['CORVU', 'HEXOR', 'FOXEN', 'ZUBIN'], alts: { HEXOR: 7000, FOXEN: 5000 } },
     ],
     sids: [
       { name: 'NOVAL3L', rwy: '08L', fixes: ['KORAN', 'ETRAX', 'NOVAL'] },
@@ -171,7 +207,14 @@ const PROCS = {
     ],
   },
 };
+// Full lateral route of a STAR: its fixes after the entry, then the approach from its IAF.
+function starRoute(star) {
+  return star.fixes.slice(1, -1).concat(approachFrom(star.rwy, star.fixes[star.fixes.length - 1]));
+}
+
 // Published holding patterns: inbound course, turn direction, minimum holding altitude.
+// IAF holds: the outer IAF's inbound course leads straight on to the IF and its racetrack lies on the far side from
+// the airport; the straight-in IAF's is the final approach course, turning away from the parallel runway.
 const HOLDS = {
   BOGNA: { inbound: 180, turn: 'R', minAlt: 9000 },
   TIMBA: { inbound: 225, turn: 'R', minAlt: 9000 },
@@ -180,18 +223,24 @@ const HOLDS = {
   DEXOR: { inbound: 360, turn: 'L', minAlt: 9000 },
   VAREN: { inbound: 85, turn: 'R', minAlt: 9000 },
   MIRLO: { inbound: 135, turn: 'L', minAlt: 9000 },
-  SOTAX: { inbound: 175, turn: 'R', minAlt: 6000 },
-  GIBRA: { inbound: 260, turn: 'R', minAlt: 6000 },
-  NEKOS: { inbound: 5, turn: 'R', minAlt: 6000 },
-  ULMAR: { inbound: 90, turn: 'L', minAlt: 6000 },
-  NORAX: { inbound: 200, turn: 'R', minAlt: 5000 },
-  SUREK: { inbound: 300, turn: 'L', minAlt: 4000 },
-  KELVO: { inbound: 125, turn: 'L', minAlt: 5000 },
-  ZUBIN: { inbound: 35, turn: 'R', minAlt: 4000 },
+  SOTAX: { inbound: 175, turn: 'R', minAlt: 7000 },
+  NURPA: { inbound: 215, turn: 'R', minAlt: 7000 },
+  GIBRA: { inbound: 305, turn: 'L', minAlt: 7000 },
+  HEXOR: { inbound: 300, turn: 'R', minAlt: 7000 },
+  NEKOS: { inbound: 5, turn: 'R', minAlt: 7000 },
+  ULMAR: { inbound: 120, turn: 'L', minAlt: 7000 },
+  KUTRA: { inbound: 35, turn: 'R', minAlt: 7000 },
+  RAXOL: { inbound: 170, turn: 'R', minAlt: 7000 },
   RVW: { inbound: 80, turn: 'R', minAlt: 4000 },
   OKR: { inbound: 225, turn: 'R', minAlt: 7000 },
   DXT: { inbound: 45, turn: 'L', minAlt: 7000 },
 };
+for (const a of Object.values(APPROACHES)) {
+  const r = RUNWAYS[a.rwy];
+  const away = a.side > 0 ? 'R' : 'L'; // turning towards the outer side
+  HOLDS[a.outer] = { inbound: Math.round(Geo.bearing(FIXES[a.outer], FIXES[a.if])), turn: away === 'R' ? 'L' : 'R', minAlt: FIXES[a.outer].alt };
+  HOLDS[a.straightIn] = { inbound: r.heading, turn: away, minAlt: FIXES[a.straightIn].alt };
+}
 const HOLD_SPEED = (alt) => (alt <= 14000 ? 230 : alt <= 20000 ? 240 : 265);
 const HOLD_LEG = (alt) => (alt <= 14000 ? 60 : 90); // seconds
 
