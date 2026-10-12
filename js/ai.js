@@ -111,7 +111,7 @@ class AIController {
     }
     if (this.nextArrival(ac) < 5) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
-      o.state === 'lineup' || o.state === 'takeoff' || o.state === 'touchgo' || (!o.isArr && o.airborne && o.alt < 300) ||
+      o.state === 'lineup' || o.state === 'takeoff' || o.state === 'touchgo' || (!o.isArr && o.airborne && o.alt < 300 && this.climbingOut(o)) ||
       (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)))));
   }
 
@@ -126,8 +126,11 @@ class AIController {
     if (this.nextArrival(ac) < 3) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
       o.state === 'takeoff' || o.state === 'touchgo' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
-      (!o.isArr && o.airborne && o.alt < 1000)))));
+      (!o.isArr && o.airborne && o.alt < 1000 && this.climbingOut(o))))));
   }
+
+  // A departure still climbing away from the runway (circuit traffic only on its upwind leg).
+  climbingOut(o) { return !o.circuit || o.circuit.phase === 'upwind'; }
 
   // Cross the aircraft holding short, and the ones queued right behind it for the same crossing when there is time
   // (next arrival 4 nm or more), as one group: "cross runway 23R behind the preceding".
@@ -169,8 +172,10 @@ class AIController {
     if (c.phase === 'downwind' && !c.orbit) {
       const room = this.circuitRoom(ac);
       const along = ac.finalGeometry().along;
-      if (!room && !c.extend && along > -1) this.cmd(ac, 'ext');
+      if (!room && !c.extend && along > -1) { this.cmd(ac, 'ext'); c.extSince = g.time; }
       else if (room && c.extend) this.cmd(ac, 'base');
+      // No gap in the traffic for a while: bring it in for a full stop instead of more touch-and-goes.
+      else if (c.extend && c.left > 0 && g.time - (c.extSince ?? g.time) > 240) this.cmd(ac, 'fs');
     }
     if ((c.phase === 'base' || c.phase === 'final') && !c.clr && ac.finalGeometry().along < 2.5) {
       const busy = g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
@@ -183,7 +188,8 @@ class AIController {
     const g = this.game, phys = ac.runway.phys;
     for (const o of g.aircraft) {
       if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
-      if (o.isArr && o.ils && !o.circuit && (o.est ? o.finalGeometry().along : this.remaining(o)) < 9) return false;
+      // A touch-and-go needs about 9 nm to the next IFR arrival; a full stop, off the runway sooner, about 7.
+      if (o.isArr && o.ils && !o.circuit && (o.est ? o.finalGeometry().along : this.remaining(o)) < (ac.circuit.left > 0 ? 9 : 7)) return false;
       if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
     }
     if (g.aircraft.some((o) => o !== ac && o.state === 'touchgo' && o.runway?.phys === phys)) return false;

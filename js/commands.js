@@ -26,7 +26,7 @@ const COMMAND_HELP = [
   ['GA', 'Go around'],
   ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm; for circuit traffic: cleared touch and go (or to land on the last circuit)'],
   ['FS', 'Circuit traffic: make this one a full stop'],
-  ['EXT / BASE', 'Circuit traffic: extend downwind (it orbits if extended far) / turn base now'],
+  ['EXT / BASE', 'Circuit traffic: extend downwind (beyond 4 nm it holds in a racetrack on the downwind side) / turn base now'],
   ['ORBIT [L|R]', 'Circuit traffic: one orbit, then carry on'],
   ['ASM', 'Assume an aircraft handed to you (its tag flashes until you do)'],
   ['ACK', 'Acknowledge a MAYDAY / PAN call (alerts the emergency services)'],
@@ -391,6 +391,7 @@ class CommandProcessor {
         }
         if (cmd === 'BASE') {
           c.extend = false;
+          c.hold = null;
           if (c.orbit) c.orbit = null;
           if (c.phase === 'downwind' && ac.finalGeometry().along > 0.5) c.phase = 'base';
           return c.phase === 'base' ? 'turning base' : 'wilco, base when ready';

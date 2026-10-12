@@ -5,7 +5,7 @@
 // join a short final. UK practice: circuit height 1000 ft above the aerodrome, squawk 7010.
 const GA_FLEET = { C172: 4, PA28: 4, C152: 2, DA40: 2, SR22: 1 };
 const GA_NAMES = { C152: 'Cessna 152', C172: 'Cessna 172', PA28: 'Piper Warrior', DA40: 'Diamond Star', SR22: 'Cirrus SR22' };
-const CIRCUIT = { width: 1.0, baseAlong: 1.3, height: 1000 };
+const CIRCUIT = { width: 1.0, baseAlong: 1.3, height: 1000, extendMin: 2.5, extendMax: 4 };
 const CIRCUIT_LEG = { upwind: 'UPW', crosswind: 'XWD', downwind: 'DWN', base: 'BASE', final: 'FIN' };
 
 Object.assign(Aircraft.prototype, {
@@ -20,7 +20,7 @@ Object.assign(Aircraft.prototype, {
   circuitIntent() { return this.circuit.left > 0 ? 'touch and go' : 'full stop'; },
   // On downwind the runway is on the circuit side's opposite hand: orbit the other way, out over open ground.
   awayFromRunway() { return this.circuit.side > 0 ? 'L' : 'R'; },
-  circuitLeg() { return this.circuit ? (this.circuit.orbit ? 'ORB' : CIRCUIT_LEG[this.circuit.phase]) : ''; },
+  circuitLeg() { const c = this.circuit; return c ? (c.orbit ? 'ORB' : c.extend && c.phase === 'downwind' ? 'EXT' : CIRCUIT_LEG[c.phase]) : ''; },
 
   flyCircuit(dt, game) {
     const c = this.circuit, r = this.runway, H = r.heading, s = c.side, p = this.perf;
@@ -48,14 +48,15 @@ Object.assign(Aircraft.prototype, {
         if (lateral * s >= CIRCUIT.width - this.turnRadius()) c.phase = 'downwind';
         break;
       case 'downwind': {
+        this.tgtAlt = height; this.tgtSpd = p.cct;
+        if (!c.called.downwind && along > -len * 0.6) { c.called.downwind = true; game.circuitCall?.(this, 'downwind'); }
+        // Told to extend: keep going, but no further than about 4 nm out, then hold there until cleared to turn base.
+        if (c.extend && (c.hold || along > CIRCUIT.extendMax)) { this.extendedHold(along, lateral, H, s); break; }
+        c.hold = null;
         // Track parallel to the runway at the circuit width (steer back towards it from either side).
         const corr = Geo.clamp((s * CIRCUIT.width - lateral) * 40, -30, 30);
         this.tgtHdg = Geo.norm(this.headingFor(H + 180) - corr);
-        this.tgtAlt = height; this.tgtSpd = p.cct;
-        if (!c.called.downwind && along > -len * 0.6) { c.called.downwind = true; game.circuitCall?.(this, 'downwind'); }
-        // Told to extend: keep going, and orbit (away from the runway) rather than wander off once well out.
-        if (c.extend) { if (along > 4) c.orbit = { dir: this.awayFromRunway(), turned: 0 }; break; }
-        if (along >= CIRCUIT.baseAlong - this.turnRadius() * 0.5) c.phase = 'base';
+        if (!c.extend && along >= CIRCUIT.baseAlong - this.turnRadius() * 0.5) c.phase = 'base';
         break;
       }
       case 'base':
@@ -74,9 +75,24 @@ Object.assign(Aircraft.prototype, {
     }
   },
 
+  // Extended downwind with no gap yet: a racetrack between 2.5 and 4 nm out, back towards the airfield on the outside
+  // of the downwind and out again along it, turning the same way at both ends (away from the runway at the far end).
+  // However long the wait, and whatever the wind, the aircraft stays close to the circuit instead of drifting off.
+  extendedHold(along, lateral, H, s) {
+    const c = this.circuit;
+    if (!c.hold) c.hold = 'in';
+    if (c.hold === 'in' && along < CIRCUIT.extendMin) c.hold = 'out';
+    else if (c.hold === 'out' && along > CIRCUIT.extendMax) c.hold = 'in';
+    const inbound = c.hold === 'in', track = inbound ? H : H + 180;
+    const want = s * (inbound ? CIRCUIT.width + 2 * this.turnRadius() : CIRCUIT.width);
+    const corr = Geo.clamp((want - lateral) * 40, -30, 30);
+    this.tgtHdg = Geo.norm(this.headingFor(track) + (inbound ? corr : -corr));
+    this.turnDir = Math.abs(Geo.diff(this.hdg, this.headingFor(track))) > 30 ? this.awayFromRunway() : null;
+  },
+
   circuitGoAround(game, reason) {
     const c = this.circuit;
-    Object.assign(c, { phase: 'upwind', clr: false, extend: false, called: {} });
+    Object.assign(c, { phase: 'upwind', clr: false, extend: false, hold: null, extSince: null, called: {} });
     this.tgtAlt = (AIRPORT.elevation || 0) + CIRCUIT.height;
     this.tgtSpd = this.perf.cct;
     this.say(game, reason);
@@ -86,7 +102,7 @@ Object.assign(Aircraft.prototype, {
   touchAndGo(game) {
     const c = this.circuit;
     c.left--; c.laps++;
-    Object.assign(c, { phase: 'upwind', clr: false, extend: false, called: {} });
+    Object.assign(c, { phase: 'upwind', clr: false, extend: false, hold: null, extSince: null, called: {} });
     this.state = 'touchgo';
     this.tg = 0;
     this.alt = 0;

@@ -279,7 +279,7 @@ class UI {
     const sel = ac === g.selected ? ' sel' : '';
     const conf = ac.emg && !ac.emg.done ? ' emergency' : ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
-    if (ac.circuit) status = `CCT ${ac.circuitLeg()}${ac.circuit.extend ? ' EXT' : ''}${ac.circuit.clr ? ' CLRD' : ''} · ${ac.circuit.left > 0 ? `${ac.circuit.left} T&G` : 'FULL STOP'}`;
+    if (ac.circuit) status = `CCT ${ac.circuitLeg()}${ac.circuit.extend && ac.circuitLeg() !== 'EXT' ? ' EXT' : ''}${ac.circuit.clr ? ' CLRD' : ''} · ${ac.circuit.left > 0 ? `${ac.circuit.left} T&G` : 'FULL STOP'}`;
     else if (ac.state === 'touchgo') status = 'TOUCH & GO';
     else if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
     else if (ac.state === 'pushback') status = 'PUSHBACK';

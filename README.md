@@ -133,7 +133,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `ga` | Go around |
 | `cl` | Cleared to land (tower). Circuit traffic: cleared touch and go (cleared to land on the last circuit) |
 | `fs` | Circuit traffic: make this circuit a full stop |
-| `ext` / `base` | Circuit traffic: extend downwind (orbits if it gets far out) / turn base now |
+| `ext` / `base` | Circuit traffic: extend downwind (beyond 4 nm it holds in a racetrack on the downwind side) / turn base now |
 | `orbit [l\|r]` | Circuit traffic: one orbit away from the runway, then carry on |
 | `asm` | Assume an aircraft handed to you |
 | `ack` | Acknowledge a MAYDAY / PAN call |
@@ -165,7 +165,9 @@ detail early with `fs`. After the last circuit they land and taxi back to the ra
 
 Traffic is kept realistic. At Ravenwood at most two are in the circuit at once (one in high traffic). Manchester needs
 prior permission for circuit training, so there is at most one, and none in high traffic. The AI tower only lets them turn
-in when no IFR arrival is within 9 nm, and lets waiting departures go first. Light aircraft need 2 minutes behind a medium
+in when no IFR arrival is within 9 nm (7 nm for a full stop), lets waiting departures go first, and after 4 minutes
+without a gap makes the circuit a full stop. An extended aircraft holds in a racetrack 2.5–4 nm out on the downwind side,
+so it never drifts away from the circuit. Light aircraft need 2 minutes behind a medium
 and 3 behind a heavy (wake penalty), and two aircraft closer than 0.3 nm and 300 ft count as an airprox.
 
 ### Emergencies
