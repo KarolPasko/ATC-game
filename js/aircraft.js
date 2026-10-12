@@ -441,7 +441,7 @@ class Aircraft {
     });
     if (!g.isArr && ['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(g.state)) {
       Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.thr.x, y: g.runway.thr.y, hdg: g.runway.heading });
-      if (g.tgtAlt < SID_TOP) g.tgtAlt = SID_TOP;
+      if (g.tgtAlt < AIRPORT.sidTop) g.tgtAlt = AIRPORT.sidTop;
     }
     const vectored = g.state === 'air' && g.mode === 'heading' && !g.ils;
     const limit = vectored ? 120 : 1200;

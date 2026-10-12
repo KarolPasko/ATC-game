@@ -4,10 +4,10 @@
 // Approach (APP): arrivals from entry to the localizer, departures from tower until the next sector.
 const POSITIONS = {
   ALL: { name: 'Combined GND + TWR + APP', short: 'ALL' },
-  GND: { name: 'Ground (DEL/GND)', short: 'GND', freq: '121.800', call: `${AIRPORT.city} Ground` },
-  TWR: { name: 'Tower', short: 'TWR', freq: '118.500', call: `${AIRPORT.city} Tower` },
-  APP: { name: 'Approach / Departure', short: 'APP', freq: '119.725', call: `${AIRPORT.city} Approach` },
-  CTR: { name: AIRPORT.control || `${AIRPORT.city} Control`, short: 'CTR', freq: '128.400', call: AIRPORT.control || `${AIRPORT.city} Control` },
+  GND: { name: 'Ground (DEL/GND)', short: 'GND', freq: AIRPORT.freqs.GND, call: `${AIRPORT.city} Ground` },
+  TWR: { name: 'Tower', short: 'TWR', freq: AIRPORT.freqs.TWR, call: `${AIRPORT.city} Tower` },
+  APP: { name: 'Approach / Departure', short: 'APP', freq: AIRPORT.freqs.APP, call: `${AIRPORT.city} Approach` },
+  CTR: { name: AIRPORT.control || `${AIRPORT.city} Control`, short: 'CTR', freq: AIRPORT.freqs.CTR, call: AIRPORT.control || `${AIRPORT.city} Control` },
 };
 
 class AIController {
@@ -73,6 +73,7 @@ class AIController {
   tower(ac) {
     const g = this.game;
     if (ac.isArr && ac.state === 'taxi') return; // vacating: handed to Ground automatically once clear
+    if (ac.state === 'taxi') { if (ac.holdShort && this.canCross(ac)) this.cmd(ac, 'cross'); return; }
     const go = () => { this.cmd(ac, 'cto'); this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' }; };
     if (ac.state === 'ground' && ac.cleared) {
       if (this.canTakeoff(ac) && this.canLineUp(ac)) go();
@@ -85,12 +86,14 @@ class AIController {
   }
 
   // Next arrival's distance to touchdown on this physical runway (nm), or Infinity.
-  nextArrival(ac) {
+  // Established aircraft count by their distance along the final; others cleared for the approach by the distance
+  // still to fly (an arrival passing abeam the airport on its way round is not "close").
+  nextArrival(ac, phys = ac.runway.phys) {
     let best = Infinity;
     for (const o of this.game.aircraft) {
-      if (!o.isArr || !o.airborne || !o.ils || o.runway.phys !== ac.runway.phys) continue;
-      const along = o.finalGeometry().along;
-      if (along > -0.5 && along < best) best = along;
+      if (!o.isArr || !o.airborne || !o.ils || o.runway.phys !== phys) continue;
+      const d = o.est ? o.finalGeometry().along : this.remaining(o);
+      if (d > -0.5 && d < best) best = d;
     }
     return best;
   }
@@ -104,9 +107,9 @@ class AIController {
       if (queue[0] !== ac) return false;
     }
     if (this.nextArrival(ac) < 5) return false;
-    return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
+    return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
       o.state === 'lineup' || o.state === 'takeoff' || (!o.isArr && o.airborne && o.alt < 300) ||
-      (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)));
+      (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)))));
   }
 
   // Take-off: runway clear of landing/vacating traffic, next arrival at least 3 nm out, and 1 minute
@@ -116,9 +119,20 @@ class AIController {
     const last = this.lastTakeoff[phys];
     if (last && g.time - last.t < (last.heavy ? 120 : 60)) return false;
     if (this.nextArrival(ac) < 3) return false;
-    return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
+    return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
       o.state === 'takeoff' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
-      (!o.isArr && o.airborne && o.alt < 1000)));
+      (!o.isArr && o.airborne && o.alt < 1000)))));
+  }
+
+  // Runway crossing: next arrival at least 3 nm out, nobody taking off, lining up to go or rolling out towards
+  // the crossing point.
+  canCross(ac) {
+    const g = this.game, n = GROUND.nodes[ac.holdShort];
+    const phys = n.phys;
+    if (this.nextArrival(ac, phys) < 3) return false;
+    return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
+      o.state === 'takeoff' || (o.state === 'lineup' && (o.lining || o.ctoPending)) || (!o.isArr && o.airborne && o.alt < 300) ||
+      ((o.state === 'landed' || (o.state === 'taxi' && o.vacating)) && (n.u - toLocal(o).u) * o.runway.dirU > -80)));
   }
 
   // Kept for callers that only want to know whether a departure could go now.

@@ -30,7 +30,7 @@ class Game {
     this.time = 0;
     this.paused = false;
     this.rate = 1;
-    this.config = this.config || '26';
+    if (!CONFIGS[this.config]) this.config = AIRPORT.defaultConfig;
     this.traffic = this.traffic || 'med';
     this.score = 0;
     this.stats = { landed: 0, departed: 0, losses: 0, goArounds: 0 };
@@ -43,7 +43,7 @@ class Game {
     AIRPORT.qnh = 1003 + Math.floor(Math.random() * 25);
     const temp = 8 + Math.floor(Math.random() * 13);
     this.wx = { cloud: rnd(['FEW030', 'SCT025', 'BKN035', 'FEW040 SCT120', 'SCT018 BKN045']), t: temp, td: temp - 3 - Math.floor(Math.random() * 6) };
-    WIND.dir = this.config === '26' ? 240 + Math.floor(Math.random() * 30) : 60 + Math.floor(Math.random() * 30);
+    WIND.dir = Geo.norm(CONFIGS[this.config].wind - 15 + Math.floor(Math.random() * 30));
     WIND.spd = 6 + Math.floor(Math.random() * 12);
     this.windBase = { ...WIND };
     this.ui.clearLog();
@@ -57,9 +57,9 @@ class Game {
     if (this.traffic !== 'low') this.spawnDeparture();
   }
 
-  activeRunways() { return this.config === '26' ? ['26L', '26R'] : ['08L', '08R']; }
-  arrivalRunways() { return this.activeRunways(); }
-  departureRunways() { return this.activeRunways(); }
+  activeRunways() { const c = CONFIGS[this.config]; return [...new Set([...c.arr, ...c.dep])]; }
+  arrivalRunways() { return CONFIGS[this.config].arr; }
+  departureRunways() { return CONFIGS[this.config].dep; }
 
   // ---------- main loop ----------
   frame(now) {
@@ -158,7 +158,9 @@ class Game {
       }
     }
     const d = Math.hypot(pos.x, pos.y);
-    let alt = along > 0 ? Geo.clamp(Math.round((d * 300 + 1000) / 1000) * 1000, 7000, 16000) : 11000 + Math.floor(Math.random() * 9) * 1000;
+    // Entry level depends on how far out the entry is (the further, the higher), from 7000 ft up to FL190.
+    const top = Geo.clamp(Math.round(d * 0.38) * 1000, 9000, 19000);
+    let alt = along > 0 ? Geo.clamp(Math.round((d * 300 + 1000) / 1000) * 1000, 7000, 16000) : top - Math.floor(Math.random() * Math.min(7, top / 1000 - 7)) * 1000;
     // Don't appear on top of someone: pick a free level or give up this time.
     const clash = (h) => this.aircraft.some((a) => a.state === 'air' && Geo.dist(a, pos) < 8 && Math.abs(a.alt - h) < 1500);
     if (clash(alt)) alt += 2000;
@@ -194,7 +196,7 @@ class Game {
       squawk: this.newSquawk(), cleared: false, spawnTime: this.time, owner: 'GND',
       cruise: rnd([240, 280, 320, 360]),
     });
-    ac.hdg = ac.tgtHdg = Geo.bearing(n, GROUND.toWorld(st.u, 0)); // nose-in to the terminal
+    ac.hdg = ac.tgtHdg = st.hdg; // nose-in
     this.aircraft.push(ac);
     ac.say(this, `${AIRPORT.city} Delivery, stand ${stand}, information ${this.atis}, IFR to ${ac.dest}, request clearance`);
   }
@@ -316,6 +318,38 @@ class Game {
     if (this.position === 'ALL') this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
   }
 
+  // A departure stopped at a holding point before a runway it has to cross: Ground hands it to Tower, who owns
+  // the runway, and the pilot asks for the crossing.
+  onHoldingShort(ac) {
+    ac.waitSince = this.time;
+    const rwy = GROUND.runwayName(GROUND.nodes[ac.holdShort].phys, this);
+    if (ac.owner === 'GND') {
+      if (this.userOwns(ac) && this.position !== 'ALL') {
+        if (this.position === 'GND') this.stats.departed++;
+        this.addScore(10, `${ac.cs} taxied to holding point ${ac.gnode}`);
+      }
+      if (this.position !== 'ALL') this.log(`${AIRPORT.city} Ground: ${ac.cs}, hold short runway ${rwy} at ${ac.gnode}, contact Tower ${POSITIONS.TWR.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
+      this.transfer(ac, 'TWR', { ai: true, silent: true });
+      if (this.position === 'TWR') ac.incoming = this.time;
+      this.pilotSay(ac, `${this.position === 'ALL' ? '' : `${AIRPORT.city} Tower, `}holding short runway ${rwy} at ${ac.gnode}, request crossing`);
+    } else {
+      this.pilotSay(ac, `holding short runway ${rwy} at ${ac.gnode}, request crossing`);
+    }
+  }
+
+  // Crossing clearance: the runway must not have traffic landing, departing or rolling through the crossing.
+  checkCrossing(ac, phys) {
+    const n = GROUND.nodes[ac.holdShort || ac.taxiPath[ac.crossStop()]] || GROUND.nodes[ac.gnode];
+    const busy = this.aircraft.find((o) => o !== ac && o.runway?.phys === phys && (
+      (o.est && o.finalGeometry().along < 2) || o.state === 'takeoff' ||
+      (o.state === 'landed' && (n.u - toLocal(o).u) * o.runway.dirU > -60)));
+    if (busy) this.addScore(-50, `Runway ${GROUND.runwayName(phys, this)} crossing — ${busy.cs} is landing or departing`);
+  }
+
+  onCrossed(ac, rwy) {
+    this.pilotSay(ac, `runway ${rwy} vacated`, !this.userOwns(ac));
+  }
+
   // Once an arrival is clear of the runway, Tower hands it to Ground automatically.
   onVacated(ac) {
     ac.waitSince = this.time;
@@ -362,7 +396,7 @@ class Game {
     const d = Math.hypot(ac.x, ac.y);
     this.stats.departed++;
     if (d >= 20 && ac.alt >= 10000) this.addScore(100, `${ac.cs} handed off`);
-    else if (ac.alt >= SID_TOP) this.addScore(50, `${ac.cs} handed off (low/early — climb them higher first)`);
+    else if (ac.alt >= AIRPORT.sidTop) this.addScore(50, `${ac.cs} handed off (low/early — climb them higher first)`);
     else this.addScore(20, `${ac.cs} handed off very early`);
   }
 
@@ -373,8 +407,9 @@ class Game {
   }
 
   runwayOccupant(ac) {
-    return this.aircraft.find((o) => o !== ac && o.runway?.phys === ac.runway.phys &&
-      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) || (o.airborne && !o.isArr && o.alt < 300)));
+    const phys = ac.runway.phys;
+    return this.aircraft.find((o) => o !== ac && ((o.crossing === phys) || (o.runway?.phys === phys &&
+      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) || (o.airborne && !o.isArr && o.alt < 300)))));
   }
 
   // An arrival reaching the threshold with the runway still occupied must go around.
@@ -390,10 +425,10 @@ class Game {
   }
 
   checkRunwayClear(ac) {
-    const busy = this.aircraft.find((o) => o !== ac && o.runway?.phys === ac.runway.phys && (
+    const busy = this.aircraft.find((o) => o !== ac && (o.crossing === ac.runway.phys || (o.runway?.phys === ac.runway.phys && (
       ['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
       (o.est && o.finalGeometry().along < 2.5) ||
-      (o.state === 'air' && !o.isArr && o.alt < 300)));
+      (o.state === 'air' && !o.isArr && o.alt < 300)))));
     if (busy) this.addScore(-50, `Runway ${ac.rwy} not clear — ${busy.cs} is on the runway / short final`);
   }
 
@@ -548,9 +583,10 @@ class Game {
   setTraffic(t) { this.traffic = t; this.log(`Traffic density: ${t}`, 'sys'); this.nextArr = Math.min(this.nextArr, this.time + 10); this.ui.update(); }
   setConfig(c) {
     if (c === this.config) return;
+    const turned = Math.abs(Geo.diff(CONFIGS[c].wind, CONFIGS[this.config].wind)) > 90;
     this.config = c;
     this.atis = String.fromCharCode(((this.atis.charCodeAt(0) - 65 + 1) % 26) + 65);
-    this.windBase.dir = Geo.norm(this.windBase.dir + 180);
+    if (turned) this.windBase.dir = Geo.norm(this.windBase.dir + 180);
     // Departures still on the ground switch to the new runway direction and a matching SID;
     // those taxiing or at a holding point are re-routed to the new holding point.
     for (const a of this.aircraft) {
@@ -558,7 +594,10 @@ class Game {
       const exit = a.route[a.route.length - 1];
       const sid = PROCS[c].sids.find((s) => s.fixes[s.fixes.length - 1] === exit);
       Object.assign(a, { rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice() });
-      if (a.state === 'ground' || a.state === 'lineup') { a.state = 'taxi'; a.taxiPath = []; a.gnode = a.gnode || GROUND.nearestNode(a); }
+      if (a.state === 'ground' || a.state === 'lineup') {
+        if (a.state === 'lineup') a.gnode = a.hpNode;
+        a.state = 'taxi'; a.taxiPath = []; a.lining = false; a.ctoPending = false; a.gp = null; a.gnode = a.gnode || GROUND.nearestNode(a);
+      }
       if (a.state === 'taxi' && (a.taxiPath.length || a.taxiTarget)) a.startTaxi(GROUND.holdingPoints[a.rwy]);
     }
     this.log(`Runway configuration changed: ${this.activeRunways().join(' & ')} in use, information ${this.atis}, wind ${this.windText()}. New arrivals will use the new STARs; vector existing traffic as needed.`, 'sys');

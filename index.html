@@ -10,7 +10,7 @@
 </head>
 <body>
   <header id="topbar">
-    <div class="brand"><b>EGRV</b> Ravenwood APP/TWR</div>
+    <div class="brand"><b id="brand-icao">EGRV</b><span id="brand-name"></span></div>
     <div class="item"><label>UTC</label><span id="clock">14:00:00Z</span></div>
     <div class="item"><label>Score</label><span id="score">0</span></div>
     <div class="item stats" id="stats"></div>
@@ -25,10 +25,7 @@
         <option value="TWR">Position: Tower</option>
         <option value="APP">Position: Approach</option>
       </select>
-      <select id="sel-config" title="Runway configuration">
-        <option value="26">Config 26</option>
-        <option value="08">Config 08</option>
-      </select>
+      <select id="sel-config" title="Runway configuration"></select>
       <select id="sel-traffic" title="Traffic density">
         <option value="low">Traffic: low</option>
         <option value="med">Traffic: med</option>
@@ -200,12 +197,14 @@
 
   <script src="js/geo.js"></script>
   <script src="js/data.js"></script>
+  <script src="js/airports/egrv.js"></script>
+  <script src="js/airports/egcc.js"></script>
+  <script src="js/airport.js"></script>
   <script src="js/aircraft.js"></script>
   <script src="js/ground.js"></script>
   <script src="js/commands.js"></script>
   <script src="js/ai.js"></script>
   <script src="js/emergency.js"></script>
-  <script src="js/map.js"></script>
   <script src="js/radar.js"></script>
   <script src="js/scope.js"></script>
   <script src="js/ui.js"></script>

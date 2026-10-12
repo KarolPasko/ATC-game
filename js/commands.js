@@ -1,19 +1,26 @@
 // Command line parser. Syntax:  [CALLSIGN] cmd [arg] [cmd [arg] ...]
 // e.g.  BAW123 h 270 a 5000 s 210     |    i 26L    |    EZY45 caf    |    dct NORAX
+// Examples in the help use the current airport's runways, holding points and fixes.
+const EX = (() => {
+  const cfg = CONFIGS[AIRPORT.defaultConfig];
+  const arr = cfg.arr[0], dep = cfg.dep[0];
+  return { arr, dep, hp: GROUND.holdingPoints[dep], fix: APPROACHES[arr].outer, configs: Object.keys(CONFIGS).join(' / ') };
+})();
 const COMMAND_HELP = [
-  ['CAF', 'Cleared as filed (IFR clearance, SID, squawk, climb ' + SID_TOP + ')'],
-  ['PB [E|W]', 'Pushback, ending up facing east or west'],
-  ['TAXI [A7|26R|12] [VIA P J3 A]', 'Taxi to a holding point / runway / stand, via the taxiways in that order (or click them on the ground chart)'],
+  ['CAF', 'Cleared as filed (IFR clearance, SID, squawk, climb ' + AIRPORT.sidTop + ')'],
+  ['PB [E|W]', `Pushback, ending up facing ${AIRPORT.pushDirs.E} or ${AIRPORT.pushDirs.W}`],
+  [`TAXI [${EX.hp}|${EX.dep}|12] [VIA A …]`, 'Taxi to a holding point / runway / stand, via the taxiways in that order (or click them on the ground chart)'],
   ['HPOS / CONT', 'Hold position / continue taxi'],
+  ['CROSS', 'Cross the runway ahead (aircraft holding short of a runway on its taxi route)'],
   ['LU [rwy]', 'Line up and wait'],
   ['CTO [rwy]', 'Cleared for take-off'],
   ['H 270 / FH 270', 'Fly heading (shortest turn)'],
   ['TL 180 / TR 090', 'Turn left / right heading'],
   ['A 5000 / C FL120 / D 30', 'Climb/descend (values ≤ 600 are flight levels)'],
   ['S 210 / S RS', 'Speed / resume normal speed'],
-  ['DCT NORAX', 'Proceed direct to waypoint (then continue route)'],
-  ['I 26L / ILS 26L', 'Cleared ILS approach (intercept from vectors)'],
-  ['APP 26R', 'Cleared full approach: fly IAF→IF→FAF, descend via, then ILS'],
+  [`DCT ${EX.fix}`, 'Proceed direct to waypoint (then continue route)'],
+  [`I ${EX.arr} / ILS ${EX.arr}`, 'Cleared ILS approach (intercept from vectors)'],
+  [`APP ${EX.arr} [VIA ${EX.fix}]`, 'Cleared full approach: fly IAF→IF→FAF, descend via, then ILS'],
   ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
@@ -29,7 +36,7 @@ const COMMAND_HELP = [
   ['.emg [type] / .emg off|rare|normal', 'Trigger an emergency now (engine, bird, medical, fuel, pressure, hydraulic, radio) or set how often they happen'],
   ['.rbl clear', 'Remove all range/bearing lines (Shift+drag or middle-drag draws one)'],
   ['.autotaxi', 'Toggle automatic taxiing of your aircraft'],
-  ['.config 26 / 08', 'Change runway configuration'],
+  [`.config ${EX.configs}`, 'Change runway configuration'],
   ['.traffic low|med|high', 'Traffic density'],
   ['.routes all|sel|off', 'Route line display'],
   ['.procs', 'Toggle SID/STAR/approach overlay'],
@@ -44,7 +51,7 @@ const CMD_ALIASES = {
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
   CL: 'CL', CTL: 'CL', CLAND: 'CL', ASM: 'ASM', ASSUME: 'ASM', ACK: 'ACK', ROGER: 'ACK',
-  PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT',
+  PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT', CROSS: 'CROSS', CX: 'CROSS', CRX: 'CROSS',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
 };
@@ -184,7 +191,7 @@ class CommandProcessor {
         if (this.needAir(ac)) return this.needAir(ac);
         if (via !== null && !this.approachVia(ac, rwy, via)) {
           const a = APPROACHES[rwy];
-          return `unable${via ? ` ${via}` : ''}, expect the runway ${rwy} approach via ${a.outer}, ${a.straightIn} or ${a.if}`;
+          return `unable${via ? ` ${via}` : ''}, expect the runway ${rwy} approach via ${[...a.iafs, a.if].join(', ')}`;
         }
         if (rwy !== ac.rwy) { ac.rwy = rwy; ac.est = ac.gs = false; }
         ac.ils = true;
@@ -201,9 +208,9 @@ class CommandProcessor {
         if (ac.isArr) return 'we are already IFR, inbound';
         if (ac.cleared) return 'already have our clearance';
         ac.cleared = true;
-        ac.tgtAlt = SID_TOP;
-        g.log(`${ac.cs} cleared to ${ac.dest} via ${ac.sid} departure, runway ${ac.rwy}, climb ${SID_TOP}, squawk ${ac.squawk}`, 'sys');
-        return `cleared to ${ac.dest}, ${ac.sid} departure, runway ${ac.rwy}, climb ${SID_TOP} ft, squawk ${ac.squawk}`;
+        ac.tgtAlt = AIRPORT.sidTop;
+        g.log(`${ac.cs} cleared to ${ac.dest} via ${ac.sid} departure, runway ${ac.rwy}, climb ${AIRPORT.sidTop}, squawk ${ac.squawk}`, 'sys');
+        return `cleared to ${ac.dest}, ${ac.sid} departure, runway ${ac.rwy}, climb ${AIRPORT.sidTop} ft, squawk ${ac.squawk}`;
       }
       case 'LU': case 'CTO': {
         const r = this.optional(cur, parseRunway) || ac.rwy;
@@ -276,9 +283,9 @@ class CommandProcessor {
       case 'PB': {
         if (ac.state !== 'stand') return 'unable, we are not on stand';
         if (!ac.isArr && !ac.cleared) return 'unable, we need our clearance first';
-        const face = this.optional(cur, (t) => ({ E: 'E', EAST: 'E', W: 'W', WEST: 'W' })[t] || null);
+        const face = this.optional(cur, (t) => ({ E: 'E', EAST: 'E', NE: 'E', W: 'W', WEST: 'W', SW: 'W' })[t] || null);
         const f = ac.pushback(face);
-        return `pushback approved, facing ${f === 'E' ? 'east' : 'west'}`;
+        return `pushback approved, facing ${AIRPORT.pushDirs[f]}`;
       }
       case 'TAXI': {
         if (!['stand', 'pushback', 'taxi', 'ground'].includes(ac.state)) return ac.state === 'landed' ? 'unable, still rolling out' : 'unable';
@@ -299,7 +306,7 @@ class CommandProcessor {
         const newRwy = !ac.isArr && Object.keys(GROUND.holdingPoints).find((r) => GROUND.holdingPoints[r] === target && RUNWAYS[r].heading === ac.runway.heading);
         if (newRwy && newRwy !== ac.rwy) {
           const exit = ac.route[ac.route.length - 1];
-          const sid = PROCS[g.config].sids.find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit);
+          const sid = [PROCS[g.config], ...Object.values(PROCS)].flatMap((p) => p.sids).find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit);
           if (!sid) return `unable, no ${exit} departure from runway ${newRwy}`;
           Object.assign(ac, { rwy: newRwy, sid: sid.name, route: sid.fixes.slice() });
         } else if (!ac.isArr && GROUND.nodes[target]?.kind === 'hold' && !newRwy && Object.values(GROUND.holdingPoints).includes(target)) {
@@ -319,6 +326,15 @@ class CommandProcessor {
         const isRwyHp = Object.values(GROUND.holdingPoints).includes(target);
         const dest = target.startsWith('ST') ? `stand ${ac.stand}` : isRwyHp ? `holding point ${target}, runway ${ac.rwy}` : `holding point ${target}`;
         return `${ac.state === 'pushback' ? 'pushback and ' : ''}taxi to ${dest}${names.length ? ' via ' + names.join(', ') : ''}`;
+      }
+      case 'CROSS': {
+        if (ac.state !== 'taxi' || ac.crossStop() < 0) return 'unable, no runway crossing on our route';
+        const k = ac.crossStop();
+        const at = ac.holdShort || ac.taxiPath[k - 1] || ac.gnode;
+        const phys = GROUND.nodes[ac.taxiPath[k]].phys;
+        if (!this.opts.ai) g.checkCrossing(ac, phys);
+        ac.clearCross();
+        return `crossing runway ${GROUND.runwayName(phys, g)} at ${at}`;
       }
       case 'HPOS':
         if (ac.state !== 'taxi') return 'unable';
@@ -416,14 +432,19 @@ class CommandProcessor {
   entryCandidates(ac, rwy) {
     const a = APPROACHES[rwy];
     const { along, lateral } = ac.finalGeometry(RUNWAYS[rwy]);
-    const outer = lateral * a.side; // positive on the outer side
+    // With an outer IAF on both sides, use the one on the aircraft's side.
+    const second = a.outer2 && lateral * a.side < 0;
+    const o = second ? a.outer2 : a.outer, other = second ? a.outer : a.outer2;
+    const outer = lateral * a.side * (second ? -1 : 1); // positive on that outer IAF's side
     const cone = (from) => along > from + 1 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - from);
     const A = a.ifAlong;
-    if (cone(A + 6)) return [a.straightIn, a.if, a.outer, a.faf];
-    if (cone(A)) return [a.if, a.straightIn, a.outer, a.faf];
-    if (along >= A - 2) return outer >= 4 ? [a.outer, a.if, a.straightIn, a.faf] : [a.if, a.outer, a.straightIn, a.faf];
-    if (along >= 8.8 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - 6.3)) return [a.faf, a.if, a.outer, a.straightIn];
-    return outer > 0 ? [a.outer, a.if, a.faf, a.straightIn] : [a.if, a.outer, a.faf, a.straightIn];
+    let list;
+    if (cone(A + 6)) list = [a.straightIn, a.if, o, a.faf];
+    else if (cone(A)) list = [a.if, a.straightIn, o, a.faf];
+    else if (along >= A - 2) list = outer >= 4 ? [o, a.if, a.straightIn, a.faf] : [a.if, o, a.straightIn, a.faf];
+    else if (along >= 8.8 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - 6.3)) list = [a.faf, a.if, o, a.straightIn];
+    else list = outer > 0 ? [o, a.if, a.faf, a.straightIn] : [a.if, o, a.faf, a.straightIn];
+    return other ? list.concat(other) : list;
   }
 
   // Fly a silent copy of the aircraft along `route` with the approach clearance: does it get established
@@ -474,7 +495,7 @@ class CommandProcessor {
         break;
       }
       case 'config': case 'rwy':
-        if (PROCS[a]) g.setConfig(a); else g.log('Usage: .config 26 | .config 08', 'err');
+        if (CONFIGS[a.toUpperCase()]) g.setConfig(a.toUpperCase()); else g.log(`Usage: .config ${Object.keys(CONFIGS).join(' | ')}`, 'err');
         break;
       case 'traffic':
         if (['low', 'med', 'high'].includes(a)) g.setTraffic(a); else g.log('Usage: .traffic low|med|high', 'err');

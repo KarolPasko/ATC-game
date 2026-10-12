@@ -51,9 +51,9 @@ Object.assign(Radar.prototype, {
     const ctx = this.ctx, M = VIDEO_MAP, s = this.view.scale;
     ctx.font = '10px "JetBrains Mono", monospace';
     if (this.layers.map) {
-      this.path(M.sea, true); ctx.fillStyle = MAP_COLORS.sea; ctx.fill();
-      this.path(M.coast); ctx.strokeStyle = MAP_COLORS.coast; ctx.lineWidth = 1.2; ctx.stroke();
-      this.path(M.river); ctx.strokeStyle = MAP_COLORS.river; ctx.lineWidth = 1; ctx.stroke();
+      for (const sea of M.seas || []) { this.path(sea, true); ctx.fillStyle = MAP_COLORS.sea; ctx.fill(); }
+      for (const c of M.coasts || []) { this.path(c); ctx.strokeStyle = MAP_COLORS.coast; ctx.lineWidth = 1.2; ctx.stroke(); }
+      for (const r of M.rivers || []) { this.path(r); ctx.strokeStyle = MAP_COLORS.river; ctx.lineWidth = 1; ctx.stroke(); }
       for (const t of M.towns) {
         this.path(t.poly, true); ctx.fillStyle = MAP_COLORS.town; ctx.fill();
         ctx.strokeStyle = MAP_COLORS.townLine; ctx.lineWidth = 1; ctx.stroke();
@@ -88,14 +88,20 @@ Object.assign(Radar.prototype, {
     if (this.layers.airspace) {
       this.path(M.tma, true); ctx.strokeStyle = MAP_COLORS.tma; ctx.lineWidth = 1.2; ctx.setLineDash([10, 4]); ctx.stroke();
       this.path(M.ctr, true); ctx.strokeStyle = MAP_COLORS.ctr; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.stroke();
-      this.path(M.sector); ctx.strokeStyle = MAP_COLORS.sector; ctx.setLineDash([2, 6]); ctx.stroke();
+      for (const x of M.extraCtrs || []) { this.path(x.poly, true); ctx.stroke(); }
+      if (M.sector) { this.path(M.sector); ctx.strokeStyle = MAP_COLORS.sector; ctx.setLineDash([2, 6]); ctx.stroke(); }
+      for (const l of M.lines || []) { this.path(l.pts); ctx.strokeStyle = MAP_COLORS.sector; ctx.setLineDash([6, 3]); ctx.stroke(); }
       ctx.setLineDash([]);
       const t = this.toScreen(M.tma[0]), c = this.toScreen(M.ctr[1]);
-      ctx.fillStyle = MAP_COLORS.tma; ctx.fillText('RAVENWOOD TMA  2500-FL195', t.x + 6, t.y + 14);
-      if (s >= 6) { ctx.fillStyle = MAP_COLORS.ctr; ctx.fillText('EGRV CTR SFC-2500', c.x + 4, c.y - 4); }
+      ctx.fillStyle = MAP_COLORS.tma; ctx.fillText(AIRPORT.tmaLabel, t.x + 6, t.y + 14);
+      if (s >= 6) {
+        ctx.fillStyle = MAP_COLORS.ctr; ctx.fillText(AIRPORT.ctrLabel, c.x + 4, c.y - 4);
+        for (const x of M.extraCtrs || []) { const p = this.toScreen(x.poly[0]); ctx.fillText(x.name, p.x + 4, p.y - 4); }
+      }
       if (s >= 5) {
-        const a = this.toScreen(M.sector[0]);
-        ctx.fillStyle = MAP_COLORS.sector; ctx.fillText('APP N', a.x + 8, a.y - 6); ctx.fillText('APP S', a.x + 8, a.y + 14);
+        ctx.fillStyle = MAP_COLORS.sector;
+        if (M.sector && M.sectorLabels) { const a = this.toScreen(M.sector[0]); ctx.fillText(M.sectorLabels[0], a.x + 8, a.y - 6); ctx.fillText(M.sectorLabels[1], a.x + 8, a.y + 14); }
+        for (const l of M.lines || []) if (l.label) { const a = this.toScreen(l.pts[0]); ctx.fillText(l.label, a.x + 4, a.y - 4); }
       }
     }
   },

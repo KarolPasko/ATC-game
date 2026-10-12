@@ -230,11 +230,12 @@ class Radar {
     }
     if (ac.state === 'stand' && !ac.isArr) {
       if (!ac.cleared) items.push(['Cleared as filed', `${cs} caf`]);
-      else items.push(['Push back, face east', `${cs} pb e`], ['Push back, face west', `${cs} pb w`], [`Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
+      else items.push([`Push back, face ${AIRPORT.pushDirs.E}`, `${cs} pb e`], [`Push back, face ${AIRPORT.pushDirs.W}`, `${cs} pb w`], [`Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
     }
     if (ac.state === 'ground') items.push([`Line up runway ${ac.rwy}`, `${cs} lu`], [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
     if (ac.state === 'lineup') items.push(ac.ctoPending ? ['Already cleared for take-off', ''] : [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
     if (ac.state === 'taxi') {
+      if (ac.crossStop() >= 0) items.push([`Cross runway ${GROUND.runwayName(GROUND.nodes[ac.taxiPath[ac.crossStop()]].phys, g)}`, `${cs} cross`]);
       if (ac.taxiPath.length) items.push(ac.holdPos ? ['Continue taxi', `${cs} cont`] : ['Hold position', `${cs} hpos`]);
       else items.push([ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
     }
@@ -253,8 +254,10 @@ class Radar {
       const rwys = Object.entries(GROUND.holdingPoints).filter(([, hp]) => hp === n.name).map(([r]) => r);
       if (rwys.includes(ac.rwy)) {
         items.push([`Taxi to holding point ${n.name} (runway ${ac.rwy})`, `${cs} taxi ${n.name}`]);
-        const side = n.name[0];
-        items.push([`… via ${side === 'A' ? 'P, A' : 'Q, B'}`, `${cs} taxi ${n.name} via ${side === 'A' ? 'P J1 J2 J3 A' : 'Q H1 H2 H3 B'}`]);
+      } else if (rwys.length && RUNWAYS[rwys[0]].heading === ac.runway.heading) {
+        items.push([`Taxi to ${n.name}, change to runway ${rwys[0]}`, `${cs} taxi ${n.name}`]);
+      } else if (!rwys.length) {
+        items.push([`Taxi to ${n.name} and hold`, `${cs} taxi ${n.name}`]);
       } else items.push([`${n.name} is not a holding point for runway ${ac.rwy}`, '']);
     }
     if (n.kind === 'stand' && ac.isArr && canTaxi) {
@@ -388,7 +391,7 @@ class Radar {
 
   drawCentrelines() {
     const ctx = this.ctx;
-    for (const id of this.game.activeRunways()) {
+    for (const id of this.game.arrivalRunways()) {
       const r = RUNWAYS[id];
       const a = APPROACHES[id];
       const far = approachPoint(id, a.ifAlong + 6);
@@ -401,6 +404,7 @@ class Radar {
       }
       // T-bar: outer IAF -> IF, straight-in IAF -> IF -> FAF
       this.polyline([FIXES[a.outer], FIXES[a.if]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
+      if (a.outer2) this.polyline([FIXES[a.outer2], FIXES[a.if]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
       this.polyline([FIXES[a.straightIn], FIXES[a.if], FIXES[a.faf]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
     }
     ctx.setLineDash([]);
@@ -437,7 +441,8 @@ class Radar {
     const onRoute = new Set(sel && sel.state !== 'gone' ? [...sel.route, sel.hold?.fix].filter(Boolean) : []);
     // IAF/IF/FAF/SID fixes only for the runways in use, unless they are on the selected aircraft's route.
     const active = new Set();
-    for (const id of g.activeRunways()) { const a = APPROACHES[id]; [...a.iafs, a.if, a.faf, SID_FIRST[id]].forEach((n) => active.add(n)); }
+    for (const id of g.arrivalRunways()) { const a = APPROACHES[id]; [...a.iafs, a.if, a.faf].forEach((n) => active.add(n)); }
+    for (const id of g.departureRunways()) if (SID_FIRST[id]) active.add(SID_FIRST[id]);
     const items = [];
     for (const f of Object.values(FIXES)) {
       const p = this.toScreen(f);
@@ -634,10 +639,10 @@ class Radar {
     ctx.font = '10px "JetBrains Mono", monospace';
     const label = ac.cs + (ac.state === 'lineup' ? ' LU' : ac.state === 'ground' ? ' HP' : '');
     const r = ac.runway;
-    const left = r.heading === 80; // keep labels away from the runway
+    const left = r.dirU > 0; // keep labels away from the runway
     const w = ctx.measureText(label).width;
     const lx = left ? p.x - w - 6 : p.x + 6;
-    const ly = p.y + (r.phys === 'N' ? -4 : 10);
+    const ly = p.y + (r.v > 0 ? -4 : 10);
     ctx.fillText(label, lx, ly);
     this.hitBoxes.push({ ac, x0: Math.min(lx, p.x) - 4, y0: ly - 11, x1: Math.max(lx + w, p.x) + 4, y1: ly + 4 });
   }

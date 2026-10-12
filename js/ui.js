@@ -8,6 +8,7 @@ class UI {
     this.history = [];
     this.histIdx = -1;
     this.input = $('cmd');
+    this.buildAirport();
     this.buildHelp();
     this.bind();
   }
@@ -86,6 +87,15 @@ class UI {
     });
   }
 
+  // Airport-specific parts of the page: header, runway configurations, command-line examples.
+  buildAirport() {
+    $('brand-icao').textContent = AIRPORT.icao;
+    $('brand-name').textContent = AIRPORT.name;
+    document.title = `${AIRPORT.icao} ${AIRPORT.name} · Radar ATC`;
+    $('sel-config').innerHTML = Object.entries(CONFIGS).map(([id, c]) => `<option value="${esc(id)}">RWY ${esc(c.label)}</option>`).join('');
+    this.input.placeholder = `e.g.  caf  ·  cto  ·  h 270 a 4000 s 210  ·  dct ${EX.fix}  ·  i ${EX.arr}  ·  app ${EX.arr}  ·  BAW123 ho`;
+  }
+
   buildHelp() {
     $('help-table').innerHTML = COMMAND_HELP.map(([c, d]) => `<tr><td><code>${esc(c)}</code></td><td>${esc(d)}</td></tr>`).join('');
   }
@@ -142,7 +152,7 @@ class UI {
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
     if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
     else if (ac.state === 'pushback') status = 'PUSHBACK';
-    else if (ac.state === 'taxi') status = !ac.taxiPath.length ? 'REQ TAXI' : ac.holdPos ? 'HOLD POSN' : ac.isArr ? `TAXI S${ac.stand}` : `TAXI ${ac.taxiTarget}`;
+    else if (ac.state === 'taxi') status = ac.holdShort || ac.crossing || !ac.taxiPath.length || ac.holdPos ? ac.groundStatus(g) : ac.isArr ? `TAXI S${ac.stand}` : `TAXI ${ac.taxiTarget}`;
     else if (ac.state === 'parked') status = `ON STAND ${ac.stand}`;
     else if (ac.state === 'ground') status = `HP ${ac.gnode} RDY`;
     else if (ac.isArr && ac.owner === 'TWR' && ac.airborne && !ac.landClr && g.position !== 'ALL') status = 'REQ LDG CLR';
@@ -207,7 +217,8 @@ class UI {
         quick = btn('Contact Ground', 'ho');
       } else if (['stand', 'pushback', 'taxi'].includes(ac.state)) {
         if (!ac.isArr && !ac.cleared) quick += btn('CAF', 'caf');
-        if (ac.state === 'stand' && !ac.isArr) quick += btn('Push, face east', 'pb e') + btn('Push, face west', 'pb w');
+        if (ac.state === 'stand' && !ac.isArr) quick += btn(`Push, face ${AIRPORT.pushDirs.E}`, 'pb e') + btn(`Push, face ${AIRPORT.pushDirs.W}`, 'pb w');
+        if (ac.state === 'taxi' && ac.crossStop() >= 0) quick += btn(`Cross ${GROUND.runwayName(GROUND.nodes[ac.taxiPath[ac.crossStop()]].phys, this.game)}`, 'cross');
         if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, 'taxi') + btn('Taxi…', 'taxi ');
         if (ac.state === 'taxi' && ac.taxiPath.length) quick += ac.holdPos ? btn('Continue', 'cont') : btn('Hold position', 'hpos');
         if (!ac.isArr && ac.owner === 'GND' && this.game.position === 'GND') quick += btn('Contact Tower', 'ho');

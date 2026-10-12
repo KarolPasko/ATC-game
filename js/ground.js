@@ -1,20 +1,13 @@
 // Aerodrome ground layout (taxiways, holding points, stands), taxi routing and ground movement.
 //
-// The layout is defined in a runway-aligned local frame in metres:
-//   u = along the runways (positive towards 080, i.e. east), v = across (positive towards 350, i.e. north).
-// Runway 08L/26R is at v = +694.5 (north), 08R/26L at v = -694.5 (south); the terminal sits between them.
+// Each airport (js/airports/*.js) builds its layout in a runway-aligned local frame in metres:
+//   u = along the runways (towards AIRPORT.axis), v = across (to the left of that direction).
+// Node kinds: twy, rwy (on a runway centreline), hold (runway holding point), exit (clear of the runway), stand.
+// Edge kinds: twy, main (parallel taxiway), lane (apron taxilane), conn (runway connector), rapid, stand, rwy.
 const GROUND = (() => {
   const M_PER_NM = 1852;
-  const U = Geo.vec(80), V = Geo.vec(350);
+  const U = Geo.vec(AIRPORT.axis), V = Geo.vec(AIRPORT.axis - 90);
   const toWorld = (u, v) => ({ x: (U.x * u + V.x * v) / M_PER_NM, y: (U.y * u + V.y * v) / M_PER_NM });
-
-  const RWY_HALF = 1852, RWY_V = 694.5, RWY_W = 60;
-  const TWY_V = 494.5; // parallel taxiways A (north) and B (south)
-  const HOLD_V = 604.5; // runway holding positions, 90 m from the centreline
-  const EXIT_V = 545; // where vacating aircraft stop, clear of the runway
-  const LANE_V = 380; // apron taxilanes P (north) and Q (south)
-  const STAND_V = 262;
-  const TWY_W = 23;
 
   const nodes = {}; // name -> { name, u, v, x, y, kind }
   const edges = []; // { a, b, name, kind, len }
@@ -28,91 +21,26 @@ const GROUND = (() => {
   };
   // Chain nodes on a straight line (sorted by u) into one named taxiway.
   const chain = (list, name, kind) => {
-    list.sort((p, q) => nodes[p].u - nodes[q].u);
+    list = [...new Set(list)].sort((p, q) => nodes[p].u - nodes[q].u);
     for (let i = 1; i < list.length; i++) edge(list[i - 1], list[i], name, kind);
   };
+  // Runway holding point protecting the runway node `rwyNode`.
+  const hold = (name, u, v, rwyNode, { ils = false } = {}) => {
+    node(name, u, v, 'hold');
+    Object.assign(nodes[name], { rwyNode, ils });
+    return name;
+  };
 
-  const sides = [
-    { s: 1, twy: 'A', lane: 'P', link: 'J', exitPre: 'K', rwyW: '08L', rwyE: '26R', stand0: 1 },
-    { s: -1, twy: 'B', lane: 'Q', link: 'H', exitPre: 'M', rwyW: '08R', rwyE: '26L', stand0: 21 },
-  ];
-  const CONNECTORS = [-1852, -1250, -600, 0, 600, 1250, 1852];
-  // Rapid exits: [runway u, taxiway u, landing direction]
-  const RAPID = [[250, -110, 260], [-450, -810, 260], [-250, 110, 80], [450, 810, 80]];
-  const STAND_U = Array.from({ length: 12 }, (_, i) => -825 + i * 150);
-  const LINKS = [-600, 0, 600];
-
-  const holdingPoints = {}; // runway id -> holding point node name
-  const exits = {}; // runway id -> [{ name, rwyNode, u }]
-  const stands = {}; // number -> { name, node, lane, u, v }
+  const holdingPoints = {}; // departure runway id -> holding point node name
+  const exits = {}; // runway id -> [{ name, rwyNode, exitNode, u, rapid }]
+  const stands = {}; // number -> { num, node, lane, u, v, bridge, hdg }
   const signs = []; // taxiway labels { text, u, v }
+  const dims = AIRPORT_DEF.ground({ node, edge, chain, hold, nodes, holdingPoints, exits, stands, signs, toWorld });
 
-  for (const sd of sides) {
-    const { s } = sd;
-    const rwyNodes = [], twyNodes = [], laneNodes = [];
-    const phys = s > 0 ? 'N' : 'S';
-    exits[sd.rwyW] = []; exits[sd.rwyE] = [];
-    // Connectors with holding points
-    CONNECTORS.forEach((u, i) => {
-      const name = `${sd.twy}${i + 1}`;
-      const r = node(`R${phys}${u}`, u, s * RWY_V, 'rwy');
-      const h = node(`${name}`, u, s * HOLD_V, 'hold');
-      const x = node(`${name}x`, u, s * EXIT_V, 'exit');
-      const t = node(`${sd.twy}@${u}`, u, s * TWY_V);
-      edge(r, h, name, 'conn'); edge(h, x, name, 'conn'); edge(x, t, name, 'conn');
-      rwyNodes.push(r); twyNodes.push(t);
-      for (const rw of [sd.rwyW, sd.rwyE]) exits[rw].push({ name, rwyNode: r, exitNode: x, u });
-      signs.push({ text: name, u: u + 18, v: s * (HOLD_V - 40) });
-    });
-    holdingPoints[sd.rwyW] = `${sd.twy}1`;
-    holdingPoints[sd.rwyE] = `${sd.twy}7`;
-    // Rapid exit taxiways (angled ~30°)
-    RAPID.forEach(([ur, ut, dir], i) => {
-      const name = `${sd.exitPre}${i + 1}`;
-      const r = node(`R${phys}${ur}`, ur, s * RWY_V, 'rwy');
-      const k = (s * RWY_V - s * EXIT_V) / (s * RWY_V - s * TWY_V);
-      const x = node(`${name}x`, ur + (ut - ur) * k, s * EXIT_V, 'exit');
-      const t = node(`${sd.twy}@${ut}`, ut, s * TWY_V);
-      edge(r, x, name, 'rapid'); edge(x, t, name, 'rapid');
-      rwyNodes.push(r); twyNodes.push(t);
-      const rw = dir === 260 ? sd.rwyE : sd.rwyW;
-      exits[rw].push({ name, rwyNode: r, exitNode: x, u: ur, rapid: true });
-      signs.push({ text: name, u: (ur + ut) / 2, v: s * (TWY_V + 105) });
-    });
-    // Apron links (J1-3 north, H1-3 south) and the taxilane
-    LINKS.forEach((u, i) => {
-      const name = `${sd.link}${i + 1}`;
-      const l = node(`${sd.lane}@${u}`, u, s * LANE_V);
-      edge(`${sd.twy}@${u}`, l, name);
-      laneNodes.push(l);
-      signs.push({ text: name, u: u + 20, v: s * ((TWY_V + LANE_V) / 2) });
-    });
-    // Stands, nose-in towards the terminal
-    STAND_U.forEach((u, i) => {
-      const num = sd.stand0 + i;
-      const l = node(`${sd.lane}@${u}`, u, s * LANE_V);
-      const st = node(`ST${num}`, u, s * STAND_V, 'stand');
-      edge(l, st, `stand ${num}`, 'stand');
-      laneNodes.push(l);
-      stands[num] = { num, node: st, lane: l, u, v: s * STAND_V };
-    });
-    // Taxilane ends join the cross taxiways E (west) and F (east)
-    const lw = node(`${sd.lane}@-1100`, -1100, s * LANE_V), le = node(`${sd.lane}@1100`, 1100, s * LANE_V);
-    laneNodes.push(lw, le);
-    edge(lw, node(`E@${s * LANE_V}`, -1250, s * LANE_V), sd.lane);
-    edge(le, node(`F@${s * LANE_V}`, 1250, s * LANE_V), sd.lane);
-    chain(twyNodes, sd.twy);
-    chain(laneNodes, sd.lane);
-    chain(rwyNodes, phys === 'N' ? '08L/26R' : '08R/26L', 'rwy');
-    signs.push({ text: sd.twy, u: -1550, v: s * TWY_V + 14 }, { text: sd.twy, u: 1000, v: s * TWY_V + 14 });
-    signs.push({ text: sd.lane, u: -1000, v: s * LANE_V + 14 });
-  }
-  // Cross taxiways E and F link both sides around the terminal.
-  for (const [name, u] of [['E', -1250], ['F', 1250]]) {
-    const list = [`A@${u}`, node(`${name}@${LANE_V}`, u, LANE_V), node(`${name}@0`, u, 0), node(`${name}@${-LANE_V}`, u, -LANE_V), `B@${u}`];
-    for (let i = 1; i < list.length; i++) edge(list[i - 1], list[i], name);
-    signs.push({ text: name, u: u + 16, v: 120 });
-  }
+  // Runway nodes know their physical runway; stands face from the taxilane into the stand (nose-in).
+  for (const p of RUNWAY_PHYS) for (const n of Object.values(nodes)) if (n.kind === 'rwy' && Math.abs(n.v - p.v) < 1) n.phys = p.phys;
+  for (const n of Object.values(nodes)) if (n.kind === 'hold') n.phys = nodes[n.rwyNode].phys;
+  for (const st of Object.values(stands)) st.hdg = Geo.bearing(nodes[st.lane], nodes[st.node]);
 
   // Adjacency for routing (runway edges are excluded from taxi routes).
   const adj = {};
@@ -150,6 +78,7 @@ const GROUND = (() => {
         if (e.kind === 'rwy') continue;
         if (e.kind === 'stand' && m !== to && n !== from) continue; // never route through a stand
         let k2 = k, cost = e.len;
+        if (nodes[m].kind === 'rwy') cost += 400; // crossing a runway: only when it saves a real detour
         if (via.length) {
           if (e.name === via[k]) k2 = k;
           else if (e.name === via[k + 1]) k2 = k + 1;
@@ -197,9 +126,15 @@ const GROUND = (() => {
     return best;
   }
 
+  // Name of a physical runway as used now (e.g. "23R"), for crossings and signs.
+  function runwayName(phys, game) {
+    const inUse = game ? game.activeRunways().find((id) => RUNWAYS[id].phys === phys) : null;
+    return inUse || RUNWAY_PHYS.find((p) => p.phys === phys).ids[0];
+  }
+
   return {
-    M_PER_NM, U, V, toWorld, nodes, edges, adj, edgeBetween, route, nearestNode, nearestEdge, holdingPoints, exits, stands, signs, taxiwayNames,
-    dims: { RWY_HALF, RWY_V, RWY_W, TWY_V, HOLD_V, LANE_V, STAND_V, TWY_W },
+    M_PER_NM, U, V, toWorld, nodes, edges, adj, edgeBetween, route, nearestNode, nearestEdge, holdingPoints, exits, stands, signs,
+    taxiwayNames, runwayName, dims: { TWY_W: 23, ...dims },
   };
 })();
 
@@ -265,9 +200,9 @@ function junctionFillets() {
 // Speed limit for a stretch of pavement (m/s).
 function edgeSpeed(e) {
   if (!e) return 15 * KT;
-  if (e.kind === 'stand' || e.name === 'P' || e.name === 'Q') return 10 * KT;
+  if (e.kind === 'stand' || e.kind === 'lane') return 10 * KT;
   if (e.kind === 'rapid' || e.kind === 'rwy') return 30 * KT;
-  if (e.name === 'A' || e.name === 'B') return 20 * KT;
+  if (e.kind === 'main') return 20 * KT;
   return 15 * KT;
 }
 
@@ -356,6 +291,7 @@ Object.assign(Aircraft.prototype, {
   taxiStartNode() {
     if (this.state === 'stand') return GROUND.stands[this.stand].lane;
     if (this.state === 'pushback') return this.push.lane;
+    if (this.state === 'taxi' && this.holdShort) return this.gnode;
     if (this.state === 'taxi' && this.taxiPath?.length) return this.taxiPath[0];
     return this.gnode;
   },
@@ -376,6 +312,7 @@ Object.assign(Aircraft.prototype, {
     this.taxiTarget = target;
     this.taxiNames = r.names;
     this.holdPos = false;
+    this.holdShort = null;
     this.gp = null; // re-plan from where the aircraft is now
     this._pred = null;
     return r;
@@ -437,7 +374,7 @@ Object.assign(Aircraft.prototype, {
     this.x = a.x; this.y = a.y;
     if (P.s < 0.99) this.hdg = Geo.norm(Geo.bearing(a, b) + 180); // nose opposite to the direction of travel
     if (P.s >= 1) {
-      this.hdg = P.face === 'E' ? 80 : 260;
+      this.hdg = Geo.norm(AIRPORT.axis + (P.face === 'E' ? 0 : 180));
       this.state = 'taxi';
       this.spd = 0;
       this.gnode = null;
@@ -477,32 +414,85 @@ Object.assign(Aircraft.prototype, {
     return P.s >= P.total - 0.05;
   },
 
-  // Taxi along the planned path, stopping behind traffic or when told to hold position.
+  // Taxi along the planned path, stopping behind traffic or when told to hold position. Without a crossing
+  // clearance the plan ends at the holding point before a runway on the route.
   taxiStep(dt, game) {
-    if (!this.gp) this.gp = buildTaxiPath(this, this.hdg, this.taxiPath, { firstKind: this.vacating ? 'rwy' : null });
+    if (!this.gp) {
+      const k = this.crossStop();
+      if (k === 0) { // holding short of a runway, waiting for the crossing clearance
+        this.spd = 0;
+        if (!this.holdShort) { this.holdShort = this.gnode; game.onHoldingShort(this); }
+        return;
+      }
+      const plan = k > 0 ? this.taxiPath.slice(0, k) : this.taxiPath;
+      this.gp = buildTaxiPath(this, this.hdg, plan, { firstKind: this.vacating ? 'rwy' : null });
+      this.gp.left = plan.length;
+    }
     const blocked = this.holdPos || !!game.groundBlocker(this);
     const done = this.followPath(dt, blocked);
     const P = this.gp;
     // The final node only counts once actually reached (an aircraft can be stopped just short of it).
     while (P.marks.length && P.marks[0].s <= P.s + 0.1 && (P.marks.length > 1 || done)) {
       const m = P.marks.shift();
-      if (this.taxiPath[0] === m.name) this.gnode = this.taxiPath.shift();
+      if (this.taxiPath[0] === m.name) { this.gnode = this.taxiPath.shift(); P.left--; this.passNode(game); }
     }
     if (done) {
-      if (this.taxiPath.length) this.gnode = this.taxiPath[this.taxiPath.length - 1];
-      this.taxiPath = [];
+      if (P.left > 0) { this.gnode = this.taxiPath[P.left - 1]; this.taxiPath.splice(0, P.left); this.passNode(game); }
       this.gp = null;
       this.spd = 0;
+      if (this.taxiPath.length) return; // at a holding point before a runway crossing
       this.arriveAt(game);
     }
+  },
+
+  // Index in the taxi path of the first runway this aircraft is not cleared to cross (-1 if none).
+  crossStop() {
+    if (this.vacating || !this.taxiPath) return -1;
+    return this.taxiPath.findIndex((n) => GROUND.nodes[n].kind === 'rwy' && GROUND.nodes[n].phys !== this.crossClr);
+  },
+
+  // Crossing bookkeeping as each node is passed: on the runway from the near holding point to the far one.
+  passNode(game) {
+    const n = GROUND.nodes[this.gnode];
+    if (!this.crossClr) return;
+    const next = GROUND.nodes[this.taxiPath[0]];
+    if (n.kind === 'hold' && !this.crossing && next?.kind === 'rwy' && next.phys === this.crossClr) { this.crossing = this.crossClr; this.crossFrom = n.name; }
+    else if (n.kind === 'rwy' && this.crossing) this.crossPast = true;
+    else if (n.kind === 'hold' && this.crossing && this.crossPast) {
+      const rwy = GROUND.runwayName(this.crossing, game);
+      this.crossing = this.crossClr = null;
+      this.crossPast = false;
+      game.onCrossed(this, rwy);
+    }
+  },
+
+  // Crossing clearance for the runway ahead on the taxi route. Returns that runway's physical id, or null.
+  clearCross() {
+    const k = this.crossStop();
+    if (k < 0) return null;
+    const phys = GROUND.nodes[this.taxiPath[k]].phys;
+    this.crossClr = phys;
+    this.crossPast = false;
+    if (this.holdShort) { this.crossing = phys; this.crossFrom = this.holdShort; this.holdShort = null; }
+    this.gp = null;
+    return phys;
+  },
+
+  // Short status for taxiing aircraft (chart labels and strips).
+  groundStatus(game) {
+    if (this.holdShort) return `HOLD SHORT ${GROUND.runwayName(GROUND.nodes[this.holdShort].phys, game)}`;
+    if (this.crossing) return `CROSSING ${GROUND.runwayName(this.crossing, game)}`;
+    if (!this.taxiPath.length) return 'REQ TAXI';
+    if (this.holdPos) return 'HOLD POSN';
+    return `TAXI ${this.taxiTarget?.startsWith('ST') ? 'STAND ' + this.stand : this.taxiTarget}`;
   },
 
   // Line up: from the holding point along the connector, curving onto the runway centreline.
   beginLineup(cto = false) {
     const hp = GROUND.nodes[this.gnode];
-    const rn = `R${this.runway.phys}${hp.u}`;
+    const rn = hp.rwyNode;
     const R = GROUND.nodes[rn];
-    const dirU = this.runway.heading === 80 ? 1 : -1;
+    const dirU = this.runway.dirU;
     this.state = 'lineup';
     this.lining = true;
     this.ctoPending = cto;
@@ -525,7 +515,7 @@ Object.assign(Aircraft.prototype, {
     const n = GROUND.nodes[this.gnode];
     if (!this.isArr && this.gnode === GROUND.holdingPoints[this.rwy]) {
       this.state = 'ground';
-      this.hdg = Geo.bearing(n, GROUND.nodes[`R${this.runway.phys}${n.u}`]);
+      this.hdg = Geo.bearing(n, GROUND.nodes[n.rwyNode]);
       game.onReachedHoldingPoint(this);
     } else if (this.isArr && n.kind === 'stand') {
       this.state = 'parked';
@@ -543,7 +533,7 @@ Object.assign(Aircraft.prototype, {
   // Landing roll: pick the first exit we can make, then turn off there.
   chooseExit() {
     const r = this.runway;
-    const dirSign = r.heading === 80 ? 1 : -1; // +u for 08, -u for 26
+    const dirSign = r.dirU; // +1 when landing towards +u
     const here = { u: (this.x * GROUND.M_PER_NM) * GROUND.U.x + (this.y * GROUND.M_PER_NM) * GROUND.U.y };
     const ktToMs = 0.5144;
     const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 1.8;
@@ -568,7 +558,7 @@ Object.assign(Aircraft.prototype, {
     }
     if (!this.exit) this.chooseExit();
     const n = GROUND.nodes[this.exit.rwyNode];
-    const dirSign = this.runway.heading === 80 ? 1 : -1;
+    const dirSign = this.runway.dirU;
     const ahead = ((n.x - this.x) * GROUND.U.x + (n.y - this.y) * GROUND.U.y) * GROUND.M_PER_NM * dirSign;
     // Brake so as to reach exit speed just as the exit starts (≈1.8 m/s²), then follow the curved exit.
     const vExit = this.exit.rapid ? 30 : 18;
@@ -688,9 +678,17 @@ class GroundView {
   }
 
   fit() {
-    const r = this.radar;
-    this.view.scale = Math.min(r.w / 4200, r.h / 1900);
-    this.view.cx = 0; this.view.cy = 0;
+    const r = this.radar, c = AIRPORT_DEF.chart || {};
+    let f = c.fit;
+    if (!f) {
+      // Bounding box (world metres) of the airport's chart area given in the local frame.
+      const b = c.box, pts = [[b.u0, b.v0], [b.u1, b.v0], [b.u0, b.v1], [b.u1, b.v1]].map(([u, v]) => GROUND.toWorld(u, v));
+      const xs = pts.map((p) => p.x * GROUND.M_PER_NM), ys = pts.map((p) => p.y * GROUND.M_PER_NM);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      f = { w: x1 - x0, h: y1 - y0, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+    }
+    this.view.scale = Math.min(r.w / f.w, r.h / f.h);
+    this.view.cx = f.cx; this.view.cy = f.cy;
     this.fitted = true;
   }
 
@@ -745,8 +743,10 @@ class GroundView {
   }
 
   // Detailed aerodrome chart in the local (u along runway, v across) metre frame, labels upright on screen.
+  // Runways, taxiways, holding points and stands are drawn from the layout; aprons, buildings and their names
+  // come from the airport's own decoration.
   drawAirfield(ctx) {
-    const D = GROUND.dims, s = this.view.scale;
+    const s = this.view.scale, N = GROUND.nodes;
     const C = {
       grass: '#17221b', grass2: '#1b2820', shoulder: '#2b3530', twy: '#454e56', apron: '#3b444c', rwy: '#2b3034',
       rwyShoulder: '#323a37', paint: '#e6ebee', yellow: '#d9b63a', road: '#565f66', building: '#2a3e52', building2: '#33475a',
@@ -762,39 +762,33 @@ class GroundView {
       ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.u, p.v) : ctx.moveTo(p.u, p.v))); ctx.stroke(); ctx.setLineDash([]);
     };
     const P = (u, v) => ({ u, v });
-
-    // Airport boundary, perimeter road, landside
-    rect(-2700, -1180, 2700, 1180, C.grass2);
-    line([P(-2700, -1180), P(2700, -1180), P(2700, 1180), P(-2700, 1180), P(-2700, -1180)], '#4f6255', Math.max(px, 2), [14, 8]);
-    line([P(-2560, -1060), P(2560, -1060), P(2560, 1060), P(-2560, 1060), P(-2560, -1060)], C.road, 7);
-    // Aprons, cargo apron and car parks
-    rect(-1150, 150, 1150, 440, C.apron);
-    rect(-1150, -440, 1150, -150, C.apron);
-    rect(-1700, -130, -1290, 130, C.apron); // cargo / GA apron
-    rect(-1240, -140, -975, -25, '#2f363c'); rect(-1240, 25, -975, 140, '#2f363c'); // car parks
-    ctx.strokeStyle = '#4b555c'; ctx.lineWidth = Math.max(px * 0.8, 0.6);
-    for (let u = -1230; u < -980; u += 12) for (const [v0, v1] of [[-135, -82], [-78, -30], [30, 78], [82, 135]]) { ctx.beginPath(); ctx.moveTo(u, v0); ctx.lineTo(u, v1); ctx.stroke(); }
-    // Service roads around the aprons (white dashed)
-    for (const sg of [1, -1]) line([P(-1150, sg * 432), P(1150, sg * 432)], 'rgba(230,235,238,0.55)', 1.2, [8, 6]);
-    line([P(-1270, -470), P(-1270, 470)], 'rgba(230,235,238,0.4)', 1.2, [8, 6]);
+    // Band from t0 to t1 along direction d and w0 to w1 across it, around point c (for markings at any angle).
+    const band = (c, d, t0, t1, w0, w1, col) => {
+      const q = { u: -d.v, v: d.u };
+      const pt = (t, w) => [c.u + d.u * t + q.u * w, c.v + d.v * t + q.v * w];
+      ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(...pt(t0, w0)); ctx.lineTo(...pt(t1, w0)); ctx.lineTo(...pt(t1, w1)); ctx.lineTo(...pt(t0, w1));
+      ctx.closePath(); ctx.fill();
+    };
+    const deco = AIRPORT_DEF.decor || {};
+    deco.base?.({ ctx, rect, line, P, C, px, s });
 
     // Runways: shoulders, pavement, blast pads, markings
-    for (const sg of [1, -1]) {
-      const v0 = sg * D.RWY_V;
-      rect(-D.RWY_HALF - 60, v0 - D.RWY_W / 2 - 7.5, D.RWY_HALF + 60, v0 + D.RWY_W / 2 + 7.5, C.rwyShoulder);
-      rect(-D.RWY_HALF, v0 - D.RWY_W / 2, D.RWY_HALF, v0 + D.RWY_W / 2, C.rwy);
-      for (const end of [-1, 1]) {
-        const e = end * D.RWY_HALF, inward = -end; // u direction pointing into the runway
+    for (const R of RUNWAY_PHYS) {
+      const v0 = R.v, half = R.width / 2;
+      rect(R.u0 - 60, v0 - half - 7.5, R.u1 + 60, v0 + half + 7.5, C.rwyShoulder);
+      rect(R.u0, v0 - half, R.u1, v0 + half, C.rwy);
+      for (const [e, inward] of [[R.u0, 1], [R.u1, -1]]) { // inward: u direction pointing into the runway
         // Blast pad with yellow chevrons beyond the end
-        rect(e, v0 - D.RWY_W / 2, e - inward * 60, v0 + D.RWY_W / 2, '#30363a');
+        rect(e, v0 - half, e - inward * 60, v0 + half, '#30363a');
         for (let k = 0; k < 3; k++) {
           const tip = e - inward * (12 + k * 16);
-          line([P(tip - inward * 14, v0 - 24), P(tip, v0), P(tip - inward * 14, v0 + 24)], C.yellow, 1.6);
+          line([P(tip - inward * 14, v0 - half * 0.8), P(tip, v0), P(tip - inward * 14, v0 + half * 0.8)], C.yellow, 1.6);
         }
-        // Threshold bar and 16 piano keys (8 each side of the centreline)
-        rect(e, v0 - 29, e + inward * 1.8, v0 + 29, C.paint);
-        for (let i = 0; i < 8; i++) for (const side of [-1, 1]) {
-          const off = side * (3.4 + i * 3.4);
+        // Threshold bar and piano keys (16 on a 60 m runway, 12 on 45 m)
+        rect(e, v0 - half + 1, e + inward * 1.8, v0 + half - 1, C.paint);
+        const nk = R.width >= 60 ? 8 : R.width >= 45 ? 6 : 4, gap = (half - 3) / nk;
+        for (let i = 0; i < nk; i++) for (const side of [-1, 1]) {
+          const off = side * gap * (i + 1);
           rect(e + inward * 6, v0 + off - 0.9, e + inward * 36, v0 + off + 0.9, C.paint);
         }
         // Aiming point (400 m) and touchdown zone markings
@@ -807,39 +801,34 @@ class GroundView {
         }
       }
       // Side stripes and centreline (30 m dashes, 20 m gaps)
-      for (const side of [-1, 1]) rect(-D.RWY_HALF, v0 + side * 28.6, D.RWY_HALF, v0 + side * 29.5, C.paint);
-      for (let u = -D.RWY_HALF + 80; u < D.RWY_HALF - 110; u += 50) rect(u, v0 - 0.5, u + 30, v0 + 0.5, C.paint);
+      for (const side of [-1, 1]) rect(R.u0, v0 + side * (half - 1.4), R.u1, v0 + side * (half - 0.5), C.paint);
+      for (let u = R.u0 + 80; u < R.u1 - 110; u += 50) rect(u, v0 - 0.5, u + 30, v0 + 0.5, C.paint);
     }
 
     // Approach lights, PAPIs, ILS antennas and windsocks for each runway end
     for (const r of Object.values(RUNWAYS)) {
-      const v0 = r.phys === 'N' ? D.RWY_V : -D.RWY_V;
-      const e = r.heading === 260 ? D.RWY_HALF : -D.RWY_HALF; // threshold u
-      const out = r.heading === 260 ? 1 : -1; // u direction away from the runway (approach side)
-      const outer = r.phys === 'N' ? 1 : -1; // v direction away from the airport
+      const v0 = r.v, e = r.thrU, out = -r.dirU; // out: u direction away from the runway on the approach side
+      const outer = RUNWAY_PHYS.find((p) => p.phys === r.phys).outer || 1; // side for the glide path antenna
+      const half = r.width / 2, left = r.dirU; // the pilot's left, in v
       ctx.fillStyle = '#d8d2a8';
       for (let d = 30; d <= 900; d += 30) ctx.fillRect(e + out * d - 1.5, v0 - 1.5, 3, 3);
       for (const d of [150, 300, 450, 600, 750]) ctx.fillRect(e + out * d - 1, v0 - (d === 300 ? 15 : 6), 2, d === 300 ? 30 : 12);
-      // PAPI on the pilot's left, 300 m in
-      const left = (r.heading === 260 ? -1 : 1);
-      for (let k = 0; k < 4; k++) rect(e - out * 300 - 2, v0 + left * (45 + k * 9) - 2, e - out * 300 + 2, v0 + left * (45 + k * 9) + 2, k < 2 ? '#f2f2f2' : '#e04848');
-      // Glide path antenna beside the touchdown zone, localizer array beyond the far end
+      for (let k = 0; k < 4; k++) rect(e - out * 300 - 2, v0 + left * (half + 15 + k * 9) - 2, e - out * 300 + 2, v0 + left * (half + 15 + k * 9) + 2, k < 2 ? '#f2f2f2' : '#e04848');
       rect(e - out * 330 - 4, v0 + outer * 140 - 4, e - out * 330 + 4, v0 + outer * 140 + 4, '#8fa0ae');
-      const far = -e;
-      rect(far - out * 300 - 2, v0 - 30, far - out * 300 + 2, v0 + 30, '#8fa0ae');
-      // Windsock
+      rect(r.endU - out * 300 - 2, v0 - 30, r.endU - out * 300 + 2, v0 + 30, '#8fa0ae'); // localizer beyond the far end
       ctx.fillStyle = '#f08a2c';
       ctx.beginPath(); ctx.moveTo(e - out * 250, v0 + outer * 120); ctx.lineTo(e - out * 250 + 14, v0 + outer * 124); ctx.lineTo(e - out * 250 + 14, v0 + outer * 116); ctx.closePath(); ctx.fill();
     }
 
     // Taxiways: shoulders, pavement (straights + junction fillets), centrelines
     const fillets = junctionFillets();
+    const TW = GROUND.dims.TWY_W;
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (const [w, col] of [[D.TWY_W + 15, C.shoulder], [D.TWY_W, C.twy]]) {
+    for (const [w, col] of [[TW + 15, C.shoulder], [TW, C.twy]]) {
       ctx.strokeStyle = col; ctx.lineWidth = w;
       for (const e of GROUND.edges) {
         if (e.kind === 'rwy') continue;
-        const A = GROUND.nodes[e.a], B = GROUND.nodes[e.b];
+        const A = N[e.a], B = N[e.b];
         ctx.beginPath(); ctx.moveTo(A.u, A.v); ctx.lineTo(B.u, B.v); ctx.stroke();
       }
       for (const f of fillets) {
@@ -847,76 +836,68 @@ class GroundView {
         ctx.beginPath(); f.pts.forEach((p, i) => (i ? ctx.lineTo(p.u, p.v) : ctx.moveTo(p.u, p.v))); ctx.stroke();
       }
     }
-    // Decorative stub to the cargo apron
-    line([P(-1250, 0), P(-1300, 0)], C.twy, D.TWY_W);
     ctx.lineCap = 'butt';
     const cl = Math.max(px * 1.1, 0.6);
     for (const e of GROUND.edges) {
       if (e.kind === 'rwy') continue;
-      const A = GROUND.nodes[e.a], B = GROUND.nodes[e.b];
-      line([A, B], C.yellow, cl);
+      line([N[e.a], N[e.b]], C.yellow, cl);
     }
     for (const f of fillets) line(f.pts, f.onRunway ? 'rgba(217,182,58,0.85)' : C.yellow, cl);
     // Taxiway edge markings along the parallel taxiways
-    for (const sg of [1, -1]) for (const side of [-1, 1]) {
-      line([P(-1852, sg * D.TWY_V + side * 11), P(1852, sg * D.TWY_V + side * 11)], 'rgba(217,182,58,0.35)', Math.max(px * 0.7, 0.4), [6, 4]);
+    for (const e of GROUND.edges) {
+      if (e.kind !== 'main') continue;
+      const A = N[e.a], B = N[e.b], d = unit(A, B);
+      for (const side of [-1, 1]) {
+        const o = { u: -d.v * side * 11, v: d.u * side * 11 };
+        line([P(A.u + o.u, A.v + o.v), P(B.u + o.u, B.v + o.v)], 'rgba(217,182,58,0.35)', Math.max(px * 0.7, 0.4), [6, 4]);
+      }
     }
 
-    // Runway holding positions: pattern A at every holding point, pattern B (ILS critical area) on the threshold connectors
-    for (const n of Object.values(GROUND.nodes)) {
+    // Runway holding positions: pattern A at every holding point, pattern B (ILS critical area) where published
+    for (const n of Object.values(N)) {
       if (n.kind !== 'hold') continue;
-      const sg = Math.sign(n.v);
-      rect(n.u - 12, n.v + sg * 1, n.u + 12, n.v + sg * 1.8, C.yellow);
-      rect(n.u - 12, n.v + sg * 3.2, n.u + 12, n.v + sg * 4, C.yellow);
-      for (let u = -12; u < 12; u += 3) {
-        rect(n.u + u, n.v + sg * 5.6, n.u + u + 1.6, n.v + sg * 6.4, C.yellow);
-        rect(n.u + u, n.v + sg * 7.8, n.u + u + 1.6, n.v + sg * 8.6, C.yellow);
-      }
-      if (Math.abs(n.u) > 1800) {
-        const vb = n.v - sg * 32;
-        rect(n.u - 12, vb - 0.4, n.u + 12, vb + 0.4, C.yellow);
-        rect(n.u - 12, vb - sg * 3.6 - 0.4, n.u + 12, vb - sg * 3.6 + 0.4, C.yellow);
-        for (let u = -11; u <= 11; u += 2.5) rect(n.u + u - 0.4, vb, n.u + u + 0.4, vb - sg * 3.6, C.yellow);
+      const d = unit(n, N[n.rwyNode]); // towards the runway
+      band(n, d, 1, 1.8, -12, 12, C.yellow);
+      band(n, d, 3.2, 4, -12, 12, C.yellow);
+      for (let w = -12; w < 12; w += 3) { band(n, d, 5.6, 6.4, w, w + 1.6, C.yellow); band(n, d, 7.8, 8.6, w, w + 1.6, C.yellow); }
+      if (n.ils) {
+        band(n, d, -32.4, -31.6, -12, 12, C.yellow);
+        band(n, d, -36, -35.2, -12, 12, C.yellow);
+        for (let w = -11; w <= 11; w += 2.5) band(n, d, -35.6, -32, w - 0.4, w + 0.4, C.yellow);
       }
     }
 
     // Stands: lead-in lines come from the junction fillets; stop bars, parking boxes, jet bridges
     for (const st of Object.values(GROUND.stands)) {
-      const sg = Math.sign(st.v);
-      rect(st.u - 6, st.v - sg * 12, st.u + 6, st.v - sg * 13, C.paint);
-      ctx.strokeStyle = 'rgba(230,235,238,0.25)'; ctx.lineWidth = Math.max(px * 0.8, 0.5);
-      ctx.strokeRect(st.u - 32, Math.min(st.v - sg * 92, st.v + sg * 30), 64, 122);
-      rect(st.u - 22, sg * 150, st.u - 18, st.v - sg * 18, '#5d6872'); // jet bridge
-      ctx.fillStyle = '#5d6872'; ctx.beginPath(); ctx.arc(st.u - 20, sg * 152, 4, 0, Math.PI * 2); ctx.fill();
+      const S = N[st.node], d = unit(N[st.lane], S); // nose direction
+      band(S, d, 12, 13, -6, 6, C.paint);
+      const q = { u: -d.v, v: d.u };
+      const corner = (t, w) => P(S.u + d.u * t + q.u * w, S.v + d.v * t + q.v * w);
+      line([corner(-30, -32), corner(92, -32), corner(92, 32), corner(-30, 32), corner(-30, -32)], 'rgba(230,235,238,0.25)', Math.max(px * 0.8, 0.5));
+      if (st.bridge) {
+        band(S, d, 18, 18 + st.bridge, -22, -18, '#5d6872');
+        const c = corner(18 + st.bridge, -20);
+        ctx.fillStyle = '#5d6872'; ctx.beginPath(); ctx.arc(c.u, c.v, 4, 0, Math.PI * 2); ctx.fill();
+      }
     }
-
-    // Buildings: terminal with roof detail, tower, fire station, hangars
-    rect(-950, -150, 950, 150, C.building);
-    rect(-900, -100, 900, 100, C.building2);
-    for (let u = -800; u <= 800; u += 200) rect(u - 1, -100, u + 1, 100, C.building);
-    ctx.fillStyle = '#4b5d6e'; ctx.beginPath(); ctx.arc(-1105, 0, 13, 0, Math.PI * 2); ctx.fill(); // tower
-    rect(1120, -35, 1190, 35, '#4b5560'); // fire station
-    rect(1185, -20, 1240, 20, '#3f4950');
-    rect(-1650, 25, -1540, 105, '#46525c'); rect(-1650, -105, -1540, -25, '#46525c'); // hangars
+    deco.buildings?.({ ctx, rect, line, P, C, px, s });
 
     // ---- screen-space labels ----
     this.resetTransform(ctx);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const fs = Math.round(Geo.clamp(11 * s / 0.3, 9, 14));
-    const label = (text, u, v, bg, fg, size = fs) => {
-      const p = this.local(u, v);
+    const labelAt = (text, p, bg, fg, size = fs) => {
       ctx.font = `600 ${size}px "JetBrains Mono", monospace`;
       const w = ctx.measureText(text).width + 6;
       ctx.fillStyle = bg; ctx.fillRect(p.x - w / 2, p.y - size * 0.65, w, size * 1.3);
       ctx.fillStyle = fg; ctx.fillText(text, p.x, p.y + 0.5);
       return w;
     };
+    const label = (text, u, v, bg, fg, size = fs) => labelAt(text, this.local(u, v), bg, fg, size);
     // Runway designators painted on the runway, reading from the approach
     for (const r of Object.values(RUNWAYS)) {
-      const v0 = r.phys === 'N' ? D.RWY_V : -D.RWY_V;
-      const e = r.heading === 260 ? D.RWY_HALF : -D.RWY_HALF, inward = r.heading === 260 ? -1 : 1;
-      const p = this.local(e + inward * 60, v0), q = this.local(e + inward * 70, v0);
-      const size = 18 * s;
+      const p = this.local(r.thrU + r.dirU * 60, r.v), q = this.local(r.thrU + r.dirU * 70, r.v);
+      const size = 18 * s * Math.min(1, r.width / 60 + 0.15);
       if (size < 5) continue;
       ctx.save();
       ctx.translate(p.x, p.y);
@@ -929,39 +910,43 @@ class GroundView {
     const big = s > 0.22, close = s > 0.55;
     if (big) for (const sg of GROUND.signs) label(sg.text, sg.u, sg.v, '#111', '#e2c033');
     // Mandatory instruction signs at the runway holding points (white on red) beside location signs
-    for (const n of Object.values(GROUND.nodes)) {
+    for (const n of Object.values(N)) {
       if (n.kind !== 'hold') continue;
       const rwys = Object.entries(GROUND.holdingPoints).filter(([, hp]) => hp === n.name).map(([rw]) => rw);
-      const phys = n.v > 0 ? '26R-08L' : '26L-08R';
+      const ids = RUNWAY_PHYS.find((p) => p.phys === n.phys).ids;
       const text = rwys.length ? `${n.name} ${rwys[0]}` : n.name;
       if (rwys.length || big) {
-        const w1 = label(close ? phys : text, n.u, n.v + Math.sign(n.v) * 30, '#b0201e', '#fff');
-        if (close) label(n.name, n.u - (w1 / 2 + 12) / s, n.v + Math.sign(n.v) * 30, '#111', '#e2c033');
+        const d = unit(n, N[n.rwyNode]);
+        const p = this.local(n.u + d.u * 30, n.v + d.v * 30);
+        const w1 = labelAt(close ? `${ids[1]}-${ids[0]}` : text, p, '#b0201e', '#fff');
+        if (close) { ctx.font = `600 ${fs}px "JetBrains Mono", monospace`; const w2 = ctx.measureText(n.name).width + 6; labelAt(n.name, { x: p.x - (w1 + w2) / 2 - 2, y: p.y }, '#111', '#e2c033'); }
       }
     }
     // Direction signs at the parallel-taxiway junctions when zoomed in
     if (close) {
-      for (const n of Object.values(GROUND.nodes)) {
-        if (!/^[AB]@/.test(n.name)) continue;
-        const names = [...new Set((GROUND.adj[n.name] || []).map(({ e }) => e.name).filter((x) => x !== 'A' && x !== 'B'))];
-        if (names.length) label(names.join(' '), n.u + 30, n.v - Math.sign(n.v) * 22, '#e2c033', '#111', fs - 1);
+      for (const n of Object.values(N)) {
+        const list = GROUND.adj[n.name] || [];
+        if (!n.name.includes('@') || !list.some(({ e }) => e.kind === 'main')) continue;
+        const names = [...new Set(list.filter(({ e }) => e.kind !== 'main').map(({ e }) => e.name))];
+        if (!names.length) continue;
+        const rv = RUNWAY_PHYS.reduce((b, p) => (Math.abs(p.v - n.v) < Math.abs(b - n.v) ? p.v : b), Infinity);
+        label(names.join(' '), n.u + 30, n.v - Math.sign(rv - n.v) * 22, '#e2c033', '#111', fs - 1);
       }
     }
     ctx.font = `${fs}px "JetBrains Mono", monospace`;
     ctx.fillStyle = '#9fb3c3';
     for (const st of Object.values(GROUND.stands)) {
-      const p = this.local(st.u, st.v - Math.sign(st.v) * 55);
+      const S = N[st.node], d = unit(N[st.lane], S);
+      const p = this.local(S.u + d.u * 55, S.v + d.v * 55);
       ctx.fillText(String(st.num), p.x, p.y);
     }
     const name = (text, u, v, col = '#7f9db5') => { const p = this.local(u, v); ctx.fillStyle = col; ctx.fillText(text, p.x, p.y); };
-    name('TERMINAL', 0, 0);
-    if (big) {
-      name('TWR', -1105, -30, '#9fb3c3'); name('RFFS', 1155, -55, '#9fb3c3'); name('CARGO / GA', -1495, 0, '#9fb3c3');
-      name('P', -1107, -83, '#9fb3c3'); name('P', -1107, 83, '#9fb3c3');
-      if (close) for (const r of Object.values(RUNWAYS)) {
-        const v0 = r.phys === 'N' ? D.RWY_V : -D.RWY_V, e = r.heading === 260 ? D.RWY_HALF : -D.RWY_HALF, out = r.heading === 260 ? 1 : -1;
-        name('PAPI', e - out * 300, v0 + (r.heading === 260 ? -1 : 1) * 85, '#8a98a5');
-        name('GP', e - out * 330, v0 + (r.phys === 'N' ? 1 : -1) * 160, '#8a98a5');
+    deco.labels?.({ name, label, big, close, s });
+    if (close) {
+      for (const r of Object.values(RUNWAYS)) {
+        const outer = RUNWAY_PHYS.find((p) => p.phys === r.phys).outer || 1;
+        name('PAPI', r.thrU + r.dirU * 300, r.v + r.dirU * (r.width / 2 + 55), '#8a98a5');
+        name('GP', r.thrU + r.dirU * 330, r.v + outer * 160, '#8a98a5');
       }
     }
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
@@ -1044,15 +1029,16 @@ class GroundView {
   drawStopBars(ctx) {
     const g = this.radar.game, s = this.view.scale;
     const clearedFrom = new Set(g.aircraft.filter((a) => a.state === 'lineup' && a.lining).map((a) => a.hpNode));
+    for (const a of g.aircraft) if (a.crossing && !a.crossPast && a.crossFrom) clearedFrom.add(a.crossFrom);
     for (const n of Object.values(GROUND.nodes)) {
       if (n.kind !== 'hold') continue;
-      const sg = Math.sign(n.v);
-      const a = this.local(n.u - 12, n.v - sg * 2), b = this.local(n.u + 12, n.v - sg * 2);
+      const d = unit(n, GROUND.nodes[n.rwyNode]), q = { u: -d.v, v: d.u };
+      const a = this.local(n.u - d.u * 2 - q.u * 12, n.v - d.v * 2 - q.v * 12), b = this.local(n.u - d.u * 2 + q.u * 12, n.v - d.v * 2 + q.v * 12);
       if (clearedFrom.has(n.name)) {
         ctx.fillStyle = '#3df07a';
         for (let k = 0; k <= 4; k++) {
-          const q = this.local(n.u, n.v + sg * (k * 20));
-          ctx.beginPath(); ctx.arc(q.x, q.y, Math.max(1.5, 1.6 * s), 0, Math.PI * 2); ctx.fill();
+          const p = this.local(n.u + d.u * k * 20, n.v + d.v * k * 20);
+          ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.5, 1.6 * s), 0, Math.PI * 2); ctx.fill();
         }
         continue;
       }
@@ -1103,7 +1089,7 @@ class GroundView {
     switch (ac.state) {
       case 'stand': status = `STAND ${ac.stand}${ac.cleared ? ' CLRD' : ''}`; break;
       case 'pushback': status = 'PUSHBACK'; break;
-      case 'taxi': status = !ac.taxiPath.length ? (ac.isArr ? 'REQ TAXI' : 'REQ TAXI') : ac.holdPos ? 'HOLD POSN' : `TAXI ${ac.taxiTarget?.startsWith('ST') ? 'STAND ' + ac.stand : ac.taxiTarget}`; break;
+      case 'taxi': status = ac.groundStatus(g); break;
       case 'ground': status = `HP ${ac.gnode} RDY`; break;
       case 'lineup': status = `LINED UP ${ac.rwy}`; break;
       case 'takeoff': status = 'T/O ROLL'; break;
