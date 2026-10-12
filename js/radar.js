@@ -36,6 +36,7 @@ class Radar {
     this.mouse = { x: 0, y: 0, down: false, dragged: false };
     this.hitBoxes = [];
     this.groundView = new GroundView(this);
+    this.initScope();
     this.bindMouse();
     window.addEventListener('resize', () => this.resize());
     // The scope's size also changes when the top bar wraps or panels resize, not just the window.
@@ -83,6 +84,14 @@ class Radar {
   bindMouse() {
     const c = this.c, g = this.game;
     c.addEventListener('pointerdown', (e) => {
+      // Shift+drag or middle-drag: range and bearing line.
+      if (g.viewMode === 'radar' && (e.button === 1 || (e.button === 0 && e.shiftKey))) {
+        e.preventDefault();
+        c.setPointerCapture(e.pointerId);
+        const a = this.rblEnd(e.offsetX, e.offsetY);
+        this.rblDraft = { a, b: this.toWorld(e.offsetX, e.offsetY), sx: e.offsetX, sy: e.offsetY };
+        return;
+      }
       if (e.button !== 0) return;
       this.closeMenu();
       c.setPointerCapture(e.pointerId);
@@ -93,6 +102,12 @@ class Radar {
       this.press = fix ? { fix, ac: g.selected, t0: performance.now(), done: false } : null;
     });
     c.addEventListener('pointerup', (e) => {
+      if (this.rblDraft) {
+        const d = this.rblDraft;
+        this.rblDraft = null;
+        if (Math.hypot(e.offsetX - d.sx, e.offsetY - d.sy) > 8) this.rbls.push({ a: d.a, b: this.rblEnd(e.offsetX, e.offsetY) });
+        return;
+      }
       if (e.button !== 0 || !this.mouse.down) return;
       this.mouse.down = false;
       if (!this.mouse.dragged) {
@@ -104,6 +119,7 @@ class Radar {
     });
     c.addEventListener('pointermove', (e) => {
       this.mouse.x = e.offsetX; this.mouse.y = e.offsetY;
+      if (this.rblDraft) { this.rblDraft.b = this.toWorld(e.offsetX, e.offsetY); return; }
       if (this.mouse.down) {
         const dx = e.offsetX - this.mouse.sx, dy = e.offsetY - this.mouse.sy;
         if (this.mouse.dragged || Math.hypot(dx, dy) > 5) {
@@ -118,7 +134,7 @@ class Radar {
       const overTarget = g.viewMode === 'ground'
         ? gv.canBuild(g.selected) && (gv.hitNode(e.offsetX, e.offsetY) || gv.hitEdge(e.offsetX, e.offsetY))
         : g.selected && this.hitFix(e.offsetX, e.offsetY);
-      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || overTarget ? 'pointer' : 'crosshair';
+      c.style.cursor = this.hitAircraft(e.offsetX, e.offsetY) || overTarget || (g.viewMode === 'radar' && this.hitTagField(e.offsetX, e.offsetY)) ? 'pointer' : 'crosshair';
     });
     c.addEventListener('pointerleave', () => { if (!this.mouse.down) this.mouse.x = -1; });
     c.addEventListener('wheel', (e) => {
@@ -140,6 +156,10 @@ class Radar {
         const hit = this.hitAircraft(e.offsetX, e.offsetY);
         if (hit) { g.select(hit); return this.openAircraftGroundMenu(hit, e.offsetX, e.offsetY); }
       }
+      if (g.viewMode === 'radar') {
+        const rbl = this.hitRbl(e.offsetX, e.offsetY);
+        if (rbl >= 0) { this.rbls.splice(rbl, 1); return; }
+      }
       const ac = g.selected;
       if (!ac || ac.state === 'gone') return;
       if (g.viewMode === 'ground') {
@@ -149,6 +169,8 @@ class Radar {
       }
       const fix = this.hitFix(e.offsetX, e.offsetY);
       if (fix) return this.openMenu(fix, ac, e.offsetX, e.offsetY);
+      const rbl = this.hitRbl(e.offsetX, e.offsetY);
+      if (rbl >= 0) { this.rbls.splice(rbl, 1); return; }
       if (!ac.airborne) return;
       const p = this.toWorld(e.offsetX, e.offsetY);
       g.commands.execute(`${ac.cs} h ${Geo.fmtHdg(Geo.bearing(ac, p))}`);
@@ -249,6 +271,8 @@ class Radar {
 
   click(sx, sy) {
     if (this.game.viewMode === 'ground') return this.groundView.click(sx, sy);
+    const field = this.hitTagField(sx, sy);
+    if (field) return this.openTagField(field, sx, sy);
     const ac = this.hitAircraft(sx, sy);
     this.game.select(ac || null);
   }
@@ -291,7 +315,9 @@ class Radar {
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, this.w, this.h);
     this.hitBoxes = [];
+    this.tagFields = [];
 
+    this.drawVideoMap();
     this.drawRings();
     if (this.showProcs) this.drawProcedures();
     this.drawCentrelines();
@@ -308,6 +334,7 @@ class Radar {
       if (ac.onGround() && ac.state !== 'landed') this.drawGround(ac);
       else if (ac.state !== 'gone') this.drawAircraft(ac);
     }
+    this.drawRbls();
     this.drawPress();
     this.drawCursorInfo();
     this.drawScaleBar();
@@ -330,11 +357,9 @@ class Radar {
       ctx.beginPath(); ctx.arc(o.x, o.y, r * this.view.scale, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.setLineDash([]);
+    if (this.layers.airspace) return; // the TMA boundary comes from the video map
     ctx.strokeStyle = COLORS.boundary;
     ctx.beginPath(); ctx.arc(o.x, o.y, AIRPORT.ctrRadius * this.view.scale, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = COLORS.boundary;
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.fillText('EGRV APP / TMA', o.x + 6, o.y - AIRPORT.ctrRadius * this.view.scale + 14);
   }
 
   polyline(pts, color, width, dash = [], alpha = 1) {
@@ -558,17 +583,20 @@ class Radar {
 
     // history trail
     ctx.fillStyle = 'rgba(160,200,220,0.5)';
-    ac.trail.forEach((t, i) => {
+    const trail = ac.trail.slice(-this.historyDots);
+    trail.forEach((t, i) => {
       const s = this.toScreen(t);
-      ctx.globalAlpha = 0.15 + (i / ac.trail.length) * 0.5;
+      ctx.globalAlpha = 0.15 + (i / trail.length) * 0.5;
       ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3);
     });
     ctx.globalAlpha = 1;
 
-    // 1-minute speed vector
-    const v = this.toScreen(Geo.offset(ac, ac.track(), ac.gs_kt() / 60));
-    ctx.strokeStyle = col; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(v.x, v.y); ctx.stroke();
+    // Speed vector (length set in the toolbar, in minutes)
+    if (this.vectorMin > 0) {
+      const v = this.toScreen(Geo.offset(ac, ac.track(), (ac.gs_kt() / 60) * this.vectorMin));
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(v.x, v.y); ctx.stroke();
+    }
 
     // target symbol
     ctx.strokeStyle = col;
@@ -588,39 +616,7 @@ class Radar {
       ctx.beginPath(); ctx.arc(p.x, p.y, 11, 0, Math.PI * 2); ctx.stroke();
     }
 
-    // data tag
-    const trend = ac.tgtAlt > ac.alt + 50 && !ac.gs ? '↑' : (ac.tgtAlt < ac.alt - 50 || ac.gs) ? '↓' : ' ';
-    let l2 = `${ac.altText()}${trend}`;
-    if (ac.gs) l2 += ' GS';
-    else if (Math.abs(ac.tgtAlt - ac.alt) > 50) l2 += ` ${ac.altText(ac.tgtAlt).slice(1)}`;
-    let info;
-    if (ac.state === 'landed') info = 'LANDED';
-    else if (ac.est) info = `LOC${ac.rwy}`;
-    else if (ac.mode === 'hold') info = `HLD ${ac.hold.fix} ${ac.hold.turn}`;
-    else if (ac.mode === 'heading') info = `H${Geo.fmtHdg(ac.tgtHdg)}${ac.ils ? ' I' + ac.rwy : ''}`;
-    else info = (ac.route[0] || '') + (ac.app ? ' A' + ac.rwy : ac.ils ? ' I' + ac.rwy : '');
-    const spd = String(Math.round(ac.gs_kt())).padStart(3, '0');
-    const lines = [
-      ac.cs + (ac.wake === 'H' ? ' H' : '') + (ac.tgtSpd ? `  S${ac.tgtSpd}` : '') +
-        (this.game.userOwns(ac) ? (ac.isArr && ac.owner === 'TWR' && !ac.landClr && this.game.position === 'TWR' ? '  CL?' : '') : `  ${ac.owner}`),
-      l2,
-      `${spd} ${info}`,
-    ];
-    const tx = p.x + 16, ty = p.y - 30;
-    ctx.strokeStyle = col; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(p.x + 5, p.y - 5); ctx.lineTo(tx - 2, ty + 10); ctx.stroke();
-    ctx.font = '11px "JetBrains Mono", monospace';
-    const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    if (ac === this.game.selected) {
-      ctx.fillStyle = 'rgba(10,30,40,0.75)';
-      ctx.fillRect(tx - 3, ty - 2, w + 6, lines.length * 13 + 4);
-    }
-    if (!blink) {
-      ctx.fillStyle = col;
-      lines.forEach((l, i) => ctx.fillText(l, tx, ty + 10 + i * 13));
-    }
-    this.hitBoxes.push({ ac, x0: Math.min(p.x - 8, tx - 3), y0: ty - 2, x1: tx + w + 3, y1: Math.max(p.y + 8, ty + 42) });
-    this.hitBoxes.push({ ac, x0: p.x - 9, y0: p.y - 9, x1: p.x + 9, y1: p.y + 9 });
+    this.drawTag(ac, p, col, blink);
   }
 
   drawGround(ac) {

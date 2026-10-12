@@ -73,39 +73,56 @@ class AIController {
   tower(ac) {
     const g = this.game;
     if (ac.isArr && ac.state === 'taxi') return; // vacating: handed to Ground automatically once clear
-    if (ac.state === 'ground') {
-      if (ac.cleared && this.runwayFree(ac)) {
-        this.cmd(ac, 'cto');
-        this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' };
-      }
+    const go = () => { this.cmd(ac, 'cto'); this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' }; };
+    if (ac.state === 'ground' && ac.cleared) {
+      if (this.canTakeoff(ac) && this.canLineUp(ac)) go();
+      else if (this.canLineUp(ac)) this.cmd(ac, 'lu'); // line up and wait behind the landing traffic
       return;
     }
-    if (ac.state === 'lineup' && !ac.ctoPending && this.runwayFree(ac, true)) {
-      this.cmd(ac, 'cto');
-      this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' };
-      return;
-    }
+    if (ac.state === 'lineup' && !ac.ctoPending && this.canTakeoff(ac)) { go(); return; }
     if (!ac.isArr && ac.airborne && ac.alt >= 1500) { this.cmd(ac, 'ho'); return; }
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 8) this.cmd(ac, 'cl');
   }
 
-  // Departure may go if it is first in the queue, the runway is empty, nothing is within
-  // 4 nm of landing on the same runway, and departure spacing has passed.
-  runwayFree(ac, linedUp = false) {
-    const g = this.game;
-    const phys = ac.runway.phys;
-    if (!linedUp) {
+  // Next arrival's distance to touchdown on this physical runway (nm), or Infinity.
+  nextArrival(ac) {
+    let best = Infinity;
+    for (const o of this.game.aircraft) {
+      if (!o.isArr || !o.airborne || !o.ils || o.runway.phys !== ac.runway.phys) continue;
+      const along = o.finalGeometry().along;
+      if (along > -0.5 && along < best) best = along;
+    }
+    return best;
+  }
+
+  // Line up and wait: first in the queue, nobody else lining up or rolling, any landing aircraft already
+  // well past the threshold, and the next arrival at least 5 nm out.
+  canLineUp(ac) {
+    const g = this.game, phys = ac.runway.phys;
+    if (ac.state === 'ground') {
       const queue = g.aircraft.filter((o) => o.state === 'ground' && o.runway.phys === phys && o.cleared);
       if (queue[0] !== ac) return false;
     }
-    // 1 minute between departures, 2 minutes behind a heavy (wake turbulence).
+    if (this.nextArrival(ac) < 5) return false;
+    return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
+      o.state === 'lineup' || o.state === 'takeoff' || (!o.isArr && o.airborne && o.alt < 300) ||
+      (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)));
+  }
+
+  // Take-off: runway clear of landing/vacating traffic, next arrival at least 3 nm out, and 1 minute
+  // since the previous departure (2 minutes behind a heavy, for wake turbulence).
+  canTakeoff(ac) {
+    const g = this.game, phys = ac.runway.phys;
     const last = this.lastTakeoff[phys];
     if (last && g.time - last.t < (last.heavy ? 120 : 60)) return false;
+    if (this.nextArrival(ac) < 3) return false;
     return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
-      ['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
-      (o.isArr && o.airborne && o.ils && o.finalGeometry().along < 4 && o.finalGeometry().along > -1) ||
+      o.state === 'takeoff' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
       (!o.isArr && o.airborne && o.alt < 1000)));
   }
+
+  // Kept for callers that only want to know whether a departure could go now.
+  runwayFree(ac) { return this.canLineUp(ac) && this.canTakeoff(ac); }
 
   // ---------- AI approach ----------
   approach(ac) {

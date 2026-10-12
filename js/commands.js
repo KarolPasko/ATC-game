@@ -18,12 +18,14 @@ const COMMAND_HELP = [
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
   ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm'],
+  ['ASM', 'Assume an aircraft handed to you (its tag flashes until you do)'],
   ['HO', 'Transfer: Ground→Tower (departures), Tower→Ground (vacated arrivals), Tower→Departure, Approach→Tower, Departure→Control'],
   ['SQ 4521', 'Squawk code'],
   ['DEL', 'Delete aircraft'],
   ['.pause  .speed 2', 'Pause / simulation rate (1, 2, 4)'],
   ['.pos gnd|twr|app|all', 'Switch controller position (the other one is flown by AI)'],
   ['.gnd / .radar', 'Show the ground (taxi) chart / the radar scope'],
+  ['.rbl clear', 'Remove all range/bearing lines (Shift+drag or middle-drag draws one)'],
   ['.autotaxi', 'Toggle automatic taxiing of your aircraft'],
   ['.config 26 / 08', 'Change runway configuration'],
   ['.traffic low|med|high', 'Traffic density'],
@@ -39,7 +41,7 @@ const CMD_ALIASES = {
   S: 'S', SPD: 'S',
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
-  CL: 'CL', CTL: 'CL', CLAND: 'CL',
+  CL: 'CL', CTL: 'CL', CLAND: 'CL', ASM: 'ASM', ASSUME: 'ASM',
   PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
@@ -319,6 +321,11 @@ class CommandProcessor {
         if (ac.state !== 'taxi' || !ac.holdPos) return 'unable';
         ac.holdPos = false;
         return 'continuing taxi';
+      case 'ASM':
+        if (ac.incoming === null || ac.incoming === undefined) return null;
+        ac.incoming = null;
+        g.log(`${ac.cs} assumed`, 'sys');
+        return null;
       case 'CL': {
         if (!ac.isArr || !ac.airborne) return 'unable';
         if (!ac.ils) return 'unable, we are not cleared for an approach';
@@ -470,6 +477,7 @@ class CommandProcessor {
       case 'clear': g.ui.clearLog(); break;
       case 'restart': g.restart(); break;
       case 'gnd': case 'ground': case 'taxi': g.setView('ground'); break;
+      case 'rbl': g.radar.rbls = []; g.log('Range/bearing lines cleared', 'sys'); break;
       case 'radar': case 'scope': g.setView('radar'); break;
       case 'autotaxi': g.autoTaxi = !g.autoTaxi; g.log(`Automatic taxi ${g.autoTaxi ? 'on' : 'off'}`, 'sys'); g.ui.update(); break;
       case 'pos': case 'position': {

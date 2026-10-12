@@ -39,6 +39,8 @@ class Game {
     this.nextDep = 15;
     this.atis = 'K';
     AIRPORT.qnh = 1003 + Math.floor(Math.random() * 25);
+    const temp = 8 + Math.floor(Math.random() * 13);
+    this.wx = { cloud: rnd(['FEW030', 'SCT025', 'BKN035', 'FEW040 SCT120', 'SCT018 BKN045']), t: temp, td: temp - 3 - Math.floor(Math.random() * 6) };
     WIND.dir = this.config === '26' ? 240 + Math.floor(Math.random() * 30) : 60 + Math.floor(Math.random() * 30);
     WIND.spd = 6 + Math.floor(Math.random() * 12);
     this.windBase = { ...WIND };
@@ -65,6 +67,15 @@ class Game {
     this.uiTimer += realDt;
     if (this.uiTimer > 0.25) { this.uiTimer = 0; this.ui.update(); }
     requestAnimationFrame((t) => this.frame(t));
+  }
+
+  // METAR for the top bar, built from the simulated weather.
+  metar() {
+    const t = Math.floor(14 * 3600 + this.time);
+    const hh = String(Math.floor(t / 3600) % 24).padStart(2, '0'), mm = String(Math.floor(t / 60) % 60).padStart(2, '0');
+    const dir = Geo.fmtHdg(Math.round(WIND.dir / 10) * 10);
+    const w = this.wx || { cloud: 'FEW030', t: 15, td: 8 };
+    return `${AIRPORT.icao} 14${hh}${mm}Z ${dir}${String(Math.round(WIND.spd)).padStart(2, '0')}KT 9999 ${w.cloud} ${w.t}/${String(w.td).padStart(2, '0')} Q${AIRPORT.qnh} NOSIG`;
   }
 
   windText() { return `${Geo.fmtHdg(Math.round(WIND.dir / 10) * 10)}/${String(Math.round(WIND.spd)).padStart(2, '0')}KT`; }
@@ -219,6 +230,11 @@ class Game {
   transfer(ac, to, { ai = false, silent = false } = {}) {
     const from = ac.owner;
     ac.owner = to;
+    // EuroScope-style states: an aircraft handed to the player flashes until assumed; one handed away shows →POS.
+    if (!silent && this.position !== 'ALL') {
+      if (to === this.position && from !== to) ac.incoming = this.time;
+      if (from === this.position && to !== from) { ac.outgoing = { to: POSITIONS[to].short, t: this.time }; ac.incoming = null; }
+    }
     ac._pred = null;
     if (to === 'CTR') return this.handOff(ac, ai || silent);
     const scored = !ai && !silent;

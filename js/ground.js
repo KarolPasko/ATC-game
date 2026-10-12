@@ -546,7 +546,7 @@ Object.assign(Aircraft.prototype, {
     const dirSign = r.heading === 80 ? 1 : -1; // +u for 08, -u for 26
     const here = { u: (this.x * GROUND.M_PER_NM) * GROUND.U.x + (this.y * GROUND.M_PER_NM) * GROUND.U.y };
     const ktToMs = 0.5144;
-    const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 4 * ktToMs;
+    const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 1.8;
     const need = (v * v - vExit * vExit) / (2 * a);
     const options = GROUND.exits[this.rwy]
       .map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign }))
@@ -561,8 +561,10 @@ Object.assign(Aircraft.prototype, {
     const n = GROUND.nodes[this.exit.rwyNode];
     const dirSign = this.runway.heading === 80 ? 1 : -1;
     const ahead = ((n.x - this.x) * GROUND.U.x + (n.y - this.y) * GROUND.U.y) * GROUND.M_PER_NM * dirSign;
-    // Brake to exit speed, then follow the curved exit off the runway.
-    this.spd = Math.max(this.exit.rapid ? 28 : 20, this.spd - 4 * dt);
+    // Brake so as to reach exit speed just as the exit starts (≈1.8 m/s²), then follow the curved exit.
+    const vExit = this.exit.rapid ? 30 : 18;
+    const vMax = Math.sqrt((vExit * KT) ** 2 + 2 * 1.8 * Math.max(0, ahead - 160)) / KT;
+    this.spd = Math.max(vExit, Math.min(this.spd - 0.5 * dt, vMax));
     if (ahead <= 160) {
       this.state = 'taxi';
       this.vacating = true; // still on the runway until clear of the holding position

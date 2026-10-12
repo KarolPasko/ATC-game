@@ -54,6 +54,9 @@ class UI {
     $('sel-traffic').onchange = (e) => g.setTraffic(e.target.value);
     $('sel-routes').onchange = (e) => g.radar.setRoutes(e.target.value);
     $('sel-pos').onchange = (e) => g.setPosition(e.target.value);
+    $('sel-vector').onchange = (e) => { g.radar.vectorMin = +e.target.value; g.radar.saveScope(); };
+    $('sel-history').onchange = (e) => { g.radar.historyDots = +e.target.value; g.radar.saveScope(); };
+    for (const k of ['map', 'areas', 'airspace']) $(`chk-${k}`).onchange = (e) => { g.radar.layers[k] = e.target.checked; g.radar.saveScope(); };
     $('chk-autotaxi').onchange = (e) => { g.autoTaxi = e.target.checked; };
     $('tab-radar').onclick = () => g.setView('radar');
     $('tab-ground').onclick = () => g.setView('ground');
@@ -103,6 +106,10 @@ class UI {
     for (const r of [1, 2, 4]) $(`btn-x${r}`).classList.toggle('on', g.rate === r);
     $('sel-config').value = g.config;
     $('sel-pos').value = g.position;
+    $('metar').textContent = g.metar();
+    $('sel-vector').value = String(g.radar.vectorMin);
+    $('sel-history').value = String(g.radar.historyDots);
+    for (const k of ['map', 'areas', 'airspace']) $(`chk-${k}`).checked = g.radar.layers[k];
     $('chk-autotaxi').checked = g.autoTaxi;
     $('tab-radar').classList.toggle('on', g.viewMode === 'radar');
     $('tab-ground').classList.toggle('on', g.viewMode === 'ground');

@@ -16,6 +16,7 @@
     <div class="item stats" id="stats"></div>
     <div class="item"><label>RWY</label><span id="active-rwys"></span></div>
     <div class="item"><label>ATIS</label><span id="atis"></span></div>
+    <div class="item metar" id="metar"></div>
     <div class="spacer"></div>
     <div class="controls">
       <select id="sel-pos" title="Your controller position (the other is flown by AI)">
@@ -38,6 +39,22 @@
         <option value="all">Routes: all mine</option>
         <option value="off">Routes: off</option>
       </select>
+      <select id="sel-vector" title="Speed vector length">
+        <option value="0">Vector: off</option>
+        <option value="1">Vector: 1 min</option>
+        <option value="2">Vector: 2 min</option>
+        <option value="3">Vector: 3 min</option>
+        <option value="5">Vector: 5 min</option>
+      </select>
+      <select id="sel-history" title="History dots">
+        <option value="0">History: 0</option>
+        <option value="3">History: 3</option>
+        <option value="6">History: 6</option>
+        <option value="10">History: 10</option>
+      </select>
+      <label class="chk" title="Coastline, river, towns, airfields"><input type="checkbox" id="chk-map"> Map</label>
+      <label class="chk" title="Danger and restricted areas"><input type="checkbox" id="chk-areas"> Areas</label>
+      <label class="chk" title="CTR, TMA and sector lines"><input type="checkbox" id="chk-airspace"> Airspace</label>
       <label class="chk"><input type="checkbox" id="chk-procs"> Procs</label>
       <label class="chk" title="AI ground handles pushback and taxi for your aircraft"><input type="checkbox" id="chk-autotaxi"> Auto taxi</label>
       <label class="chk"><input type="checkbox" id="chk-voice"> Voice</label>
@@ -55,6 +72,7 @@
         <button id="tab-ground">Ground chart</button>
       </div>
       <div id="ctxmenu" hidden></div>
+      <div id="tagpop" hidden></div>
       <div id="taxibuild" hidden></div>
       <div id="legend">
         <span><i class="ln dep"></i>Departure route</span>
@@ -105,6 +123,15 @@
         (<code>taxi 14</code> for stand 14). <code>hpos</code> / <code>cont</code> stop and restart a taxiing aircraft.
         Right-click an aircraft on the chart for its instructions, or a holding point / stand for taxi options. With
         <b>Auto taxi</b> ticked, ground movement is handled for you.</p>
+      <h2>EuroScope-style scope</h2>
+      <p>Data tags show callsign, Mode-C level ↑↓ cleared level, ground speed/10, heading or next fix, and assigned speed.
+        <b>Click a tag field</b> to open its list: the cleared level, the heading/direct-to field (with turn direction), or the
+        speed. Click the <b>callsign</b> for the aircraft menu (transfer, approach clearances, hold, go-around, landing
+        clearance). Tags of aircraft handed to you by another controller <b>flash until you assume them</b> (click the callsign
+        or <code>asm</code>); aircraft you hand away briefly show <code>→TWR</code> etc. <b>Shift+drag</b> (or middle-drag)
+        between points or aircraft draws a range/bearing line, with the predicted minimum distance between two aircraft;
+        right-click a line to remove it. The toolbar sets the speed-vector length, history dots and the map, areas and
+        airspace layers. The METAR is shown in the top bar.</p>
       <h2>Mouse</h2>
       <p>Click an aircraft to select it. <b>Press and hold a waypoint</b> to send the selected aircraft direct to it (a ring fills
         around the fix). <b>Right-click a waypoint</b> for direct, holding (as published or with your own turns) and
@@ -154,7 +181,9 @@
   <script src="js/ground.js"></script>
   <script src="js/commands.js"></script>
   <script src="js/ai.js"></script>
+  <script src="js/map.js"></script>
   <script src="js/radar.js"></script>
+  <script src="js/scope.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/game.js"></script>
 </body>

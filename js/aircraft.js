@@ -123,7 +123,7 @@ class Aircraft {
     if (this.trailTimer >= 4) {
       this.trailTimer = 0;
       this.trail.push({ x: this.x, y: this.y });
-      if (this.trail.length > 8) this.trail.shift();
+      if (this.trail.length > 10) this.trail.shift();
     }
   }
 

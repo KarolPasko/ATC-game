@@ -49,6 +49,20 @@ main { display: grid; grid-template-columns: 1fr 330px; min-height: 0; }
 #taxibuild .tb-hint { color: var(--dim); font-size: 10px; }
 #taxibuild .tb-btns { display: flex; gap: 4px; }
 #taxibuild button[disabled] { opacity: 0.4; cursor: not-allowed; }
+#tagpop { position: absolute; z-index: 6; background: #18232d; border: 1px solid #5d7f96; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55); min-width: 120px; max-width: 260px; font-size: 11px; }
+#tagpop[hidden] { display: none; }
+#tagpop .ph { padding: 4px 8px; background: #22384a; color: #cfe6f5; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#tagpop .pturn { display: flex; border-bottom: 1px solid #2c3b48; }
+#tagpop .pturn button { flex: 1; border: none; border-radius: 0; padding: 3px 0; background: transparent; }
+#tagpop .pturn button.on { background: #234452; color: var(--cyan); }
+#tagpop .plist { max-height: 264px; overflow-y: auto; }
+#tagpop .plist button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; background: transparent; padding: 2px 10px; font-size: 11px; }
+#tagpop .plist button:hover, #tagpop .plist button:focus-visible { background: #2c4a5e; color: #fff; }
+#tagpop .plist button.cur { background: #3b5f2f; color: #eaffd8; }
+#tagpop .plist button.fix { color: var(--cyan); }
+#tagpop .plist button.opt { color: var(--warn); }
+#tagpop .plist button.sep { color: var(--dim); pointer-events: none; text-align: center; }
+.metar { color: #a9c4d6; font-size: 11px; }
 #viewtabs { position: absolute; top: 8px; left: 10px; display: flex; gap: 0; z-index: 4; }
 #viewtabs button { border-radius: 0; padding: 4px 12px; }
 #viewtabs button:first-child { border-radius: 3px 0 0 3px; }

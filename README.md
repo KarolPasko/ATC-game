@@ -54,6 +54,20 @@ Arrivals brake for the first exit they can make. Once clear of the runway, Tower
 ask for taxi: `taxi` sends them to their stand (or `taxi 14` for stand 14). Right-click an aircraft on the chart for its
 instructions, or a holding point / stand for taxi options. Tick **Auto taxi** to let the AI do ground movement.
 
+### EuroScope-style scope
+
+- **Data tags:** callsign, Mode-C level ↑↓ cleared level, ground speed/10, heading or next fix, and assigned speed.
+- **Clickable fields:** click the cleared level, heading/direct-to or speed field to open a list and pick a value. Headings
+  can be forced left or right. Click the callsign for the aircraft menu: transfer, approach clearances, hold, go-around and
+  landing clearance.
+- **Handoffs:** an aircraft handed to you by another controller flashes until you assume it (click the callsign or type
+  `asm`). An aircraft you hand away briefly shows `→TWR` etc.
+- **Range/bearing lines:** Shift+drag (or middle-drag) between points or aircraft. Between two aircraft the line shows the
+  predicted minimum distance and when it happens. Right-click a line to remove it, or type `.rbl clear` to remove them all.
+- **Video map:** coastline, river, towns, nearby airfields, danger/restricted areas, the CTR, the TMA and the sector split,
+  each switchable in the toolbar.
+- **Toolbar:** speed-vector length (off/1/2/3/5 min) and history dots. The top bar shows the METAR.
+
 ### Mouse
 
 | Action | Effect |
@@ -128,4 +142,6 @@ separation loss −50 · wake spacing −30 · departure leaving without a hando
 | `js/ai.js` | AI controller for the position you are not working |
 | `js/game.js` | Simulation loop, traffic spawning, separation checks, scoring |
 | `js/radar.js` | Radar scope drawing and mouse interaction |
+| `js/scope.js` | EuroScope-style tags and pop-up lists, handoff states, range/bearing lines, video map drawing |
+| `js/map.js` | Video map data (coastline, towns, airfields, danger areas, CTR/TMA) |
 | `js/ui.js` | Flight strips, selected aircraft panel, message log |
