@@ -897,9 +897,13 @@ class GroundView {
     // Stands: lead-in lines come from the junction fillets; stop bars, parking boxes, jet bridges
     for (const st of Object.values(GROUND.stands)) {
       const S = N[st.node], d = unit(N[st.lane], S); // nose direction
-      band(S, d, 12, 13, -6, 6, C.paint);
       const q = { u: -d.v, v: d.u };
       const corner = (t, w) => P(S.u + d.u * t + q.u * w, S.v + d.v * t + q.v * w);
+      if (st.ga) { // light-aircraft parking spot (about 12 m span), parked facing the taxilane
+        line([corner(-9, -8), corner(9, -8), corner(9, 8), corner(-9, 8), corner(-9, -8)], 'rgba(230,235,238,0.35)', Math.max(px * 0.8, 0.5));
+        continue;
+      }
+      band(S, d, 12, 13, -6, 6, C.paint);
       line([corner(-30, -32), corner(92, -32), corner(92, 32), corner(-30, 32), corner(-30, -32)], 'rgba(230,235,238,0.25)', Math.max(px * 0.8, 0.5));
       if (st.bridge) {
         band(S, d, 18, 18 + st.bridge, -22, -18, '#5d6872');
@@ -963,8 +967,8 @@ class GroundView {
     ctx.font = `${fs}px "JetBrains Mono", monospace`;
     ctx.fillStyle = '#9fb3c3';
     for (const st of Object.values(GROUND.stands)) {
-      const S = N[st.node], d = unit(N[st.lane], S);
-      const p = this.local(S.u + d.u * 55, S.v + d.v * 55);
+      const S = N[st.node], d = unit(N[st.lane], S), k = st.ga ? 17 : 55;
+      const p = this.local(S.u + d.u * k, S.v + d.v * k);
       ctx.fillText(String(st.num), p.x, p.y);
     }
     const name = (text, u, v, col = '#7f9db5') => { const p = this.local(u, v); ctx.fillStyle = col; ctx.fillText(text, p.x, p.y); };

@@ -133,6 +133,11 @@ class Aircraft {
 
   navigate(dt, game) {
     if (this.circuit) return this.flyCircuit(dt, game);
+    if (this.nordoRejoin && game.time >= this.nordoRejoin) {
+      this.nordoRejoin = null;
+      this.route = approachFrom(this.rwy, transitionFor(this.rwy, this)[0]);
+      Object.assign(this, { mode: 'route', leg: null, app: true, ils: true, landClr: true });
+    }
     // Departures fly runway heading until 800 ft before turning on course.
     if (!this.isArr && this.alt < 800) { this.tgtHdg = this.runway.heading; return; }
 
@@ -450,6 +455,8 @@ class Aircraft {
     this.tgtSpd = null;
     this.prevLateral = null;
     this.gaTime = game.time;
+    // Lost communications: climb out on the missed approach, then fly the transition round for another approach.
+    if (this.emg?.type === 'RADIO' && !this.emg.done) this.nordoRejoin = game.time + 60;
     this.say(game, `${reason}, runway heading, climbing ${gaAlt}`);
     game.onGoAround(this);
   }

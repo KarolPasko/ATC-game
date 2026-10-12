@@ -362,7 +362,7 @@ AIRPORTS.EGRV = {
     labels({ name, big }) {
       name('TERMINAL', 0, 0);
       if (!big) return;
-      name('TWR', -1105, -30, '#9fb3c3'); name('RFFS', 1155, -55, '#9fb3c3'); name('GA / FLYING CLUB', -1495, -125, '#9fb3c3');
+      name('TWR', -1105, -30, '#9fb3c3'); name('RFFS', 1155, -55, '#9fb3c3'); name('GA / FLYING CLUB', -1495, -152, '#9fb3c3');
       name('P', -1107, -83, '#9fb3c3'); name('P', -1107, 83, '#9fb3c3');
     },
   },
