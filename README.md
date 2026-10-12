@@ -36,20 +36,23 @@ radio calls are dimmed in the log. You only lose points for separation involving
   climb them, and hand them off (`ho`) once they're above FL100 and 20 nm out. Their SID is drawn in **blue**.
 - Keep **3 nm or 1000 ft** between airborne aircraft. A yellow tag means a predicted conflict; red means separation is lost.
 
-### Ground chart (Tower)
+### Ground chart
 
-Switch the scope to **Ground chart** (tab at the top left, or `.gnd`) to see the airfield:
-- **Taxiways:** parallel taxiways A and B, rapid exits K/M, cross taxiways E and F, and apron taxilanes P and Q.
-- **Holding points:** A1–A7 and B1–B7, with stop bars.
-- **Stands and buildings:** 24 stands around the terminal, plus the control tower and the fire station.
+Switch the scope to **Ground chart** (tab at the top left, or `.gnd`). It is a detailed aerodrome chart:
+- **Runways:** threshold piano keys, designators, aiming-point and touchdown-zone markings, blast pads, approach lights, PAPIs, ILS antennas and windsocks.
+- **Taxiways:** parallel taxiways A and B, rapid exits K/M, cross taxiways E and F, and apron taxilanes P and Q, all with curved junction fillets.
+- **Holding points:** A1–A7 and B1–B7, with holding-position markings, stop bars and mandatory signs.
+- **Stands and buildings:** 24 stands with lead-in lines and jet bridges, the terminal, tower, fire station, cargo/GA apron and car parks.
 
 Departures start on a stand and call Delivery. Give them `caf`, then assign the taxi route. Select the aircraft, click the
-taxiways in order, then click the holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L) and press **Send taxi**. You can also
-type it: `taxi A7 via P J3 A`. The `via` taxiways are followed in that order. Aircraft push back in an arc (`pb e` / `pb w` picks
-the facing), then taxi with smooth turns, slowing for corners and stopping behind traffic. When they report
-ready, use `lu`/`cto`. Arrivals vacate at the first exit they can make and ask for taxi; `taxi` sends them to their stand
-(or `taxi 14` for stand 14). Right-click a holding point or stand on the chart for the same options. Tick **Auto taxi** to let
-the AI do ground movement.
+taxiways in order, then click the holding point (A1/A7 for 08L/26R, B1/B7 for 08R/26L) and press **Send taxi**, or type
+`taxi A7 via P J3 A`. Aircraft push back in an arc (`pb e` / `pb w` picks the facing), then follow the curves on the chart,
+slowing for corners and stopping behind traffic. **At the holding point Ground hands them to Tower automatically.** `lu`/`cto`
+taxis them onto the runway (stop bar off, green lead-on lights); with a take-off clearance they roll once aligned.
+
+Arrivals brake for the first exit they can make. Once clear of the runway, Tower hands them to Ground automatically and they
+ask for taxi: `taxi` sends them to their stand (or `taxi 14` for stand 14). Right-click an aircraft on the chart for its
+instructions, or a holding point / stand for taxi options. Tick **Auto taxi** to let the AI do ground movement.
 
 ### Mouse
 
@@ -80,7 +83,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `s 210` / `s rs` | Assign speed / resume normal speed |
 | `dct NORAX` | Direct to a waypoint, then continue the route |
 | `i 26L` / `ils 26L` | Cleared ILS: intercept the localizer from vectors |
-| `app 26R` | Cleared for the full approach: IAF → IF → FAF, descending via the published altitudes, then ILS |
+| `app 26R [via FIX]` | Cleared for the approach: the best entry (straight-in IAF, outer IAF, IF or FAF) is chosen from the aircraft's position, or name it; descends via the published altitudes, then ILS |
 | `hold [fix] [inbound] [L\|R] [1.5M]` | Hold as published, or with your own inbound course, turns and leg time |
 | `res` | Resume own navigation on the route |
 | `ga` | Go around |
@@ -95,7 +98,8 @@ System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos gnd|twr|app|all`, `.pause`
 ## Realism
 
 - **Route lines** show only for the selected aircraft by default (top bar: *Routes: selected only / all mine / off*).
-- **Procedures**: 11 STARs and 8 SIDs per runway direction. The north runway's approach is 1000 ft higher than the south
+- **Procedures**: 11 STARs and 8 SIDs per runway direction. Every runway end has an RNAV T-bar approach: a straight-in IAF and
+  an outer IAF (joining the final at 90°) feeding the IF and FAF. The north runway's approach is 1000 ft higher than the south
   runway's, so arrivals are vertically separated until established. Departure routes splay 15° away from the parallel runway.
 - **Predicted flight path**: the line ahead of each aircraft comes from simulating it forward, so it shows the real
   curved turns, fly-by waypoints, localizer intercepts and holding patterns. A dashed line means the aircraft is on a heading.

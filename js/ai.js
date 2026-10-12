@@ -37,24 +37,6 @@ class AIController {
     }
     if (ai('APP')) this.sequenceArrivals();
     if (pos === 'APP') this.warnUnhandedArrivals();
-    if (pos === 'GND' || pos === 'TWR') this.warnPendingTransfers();
-  }
-
-  // Remind the player about aircraft waiting on their frequency for a transfer.
-  warnPendingTransfers() {
-    const g = this.game;
-    for (const ac of g.aircraft) {
-      if (!g.userOwns(ac) || ac.transferWarned) continue;
-      const waiting = g.time - (ac.waitSince ?? g.time);
-      if (g.position === 'GND' && ac.state === 'ground' && waiting > 45) {
-        ac.transferWarned = true;
-        g.log(`Ravenwood Tower: ${ac.cs} is waiting at holding point ${ac.gnode} — transfer it to me (ho)`, 'err');
-      }
-      if (g.position === 'TWR' && ac.isArr && ac.state === 'taxi' && ac.vacatedVia && waiting > 45) {
-        ac.transferWarned = true;
-        g.log(`Ravenwood Ground: ${ac.cs} has vacated via ${ac.vacatedVia} — transfer it to me (ho)`, 'err');
-      }
-    }
   }
 
   // ---------- AI ground ----------
@@ -64,15 +46,12 @@ class AIController {
       if (g.time - ac.spawnTime > 20) this.cmd(ac, 'caf');
       return;
     }
-    if (ac.state === 'ground') { this.cmd(ac, 'ho'); return; } // at the holding point: over to tower
     this.groundMovement(ac);
   }
 
   // Combined position: the player is both, so frequency changes happen silently.
   combinedTransfers(ac) {
     const g = this.game;
-    if (!ac.isArr && ac.state === 'ground' && ac.owner === 'GND') g.transfer(ac, 'TWR', { silent: true });
-    if (ac.isArr && ac.state === 'taxi' && ac.owner === 'TWR') g.transfer(ac, 'GND', { silent: true });
     if (!ac.isArr && ac.airborne && ac.owner === 'TWR' && ac.alt >= 1500) g.transfer(ac, 'APP', { silent: true });
     if (ac.isArr && ac.est && ac.owner === 'APP') g.transfer(ac, 'TWR', { silent: true });
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 6) {
@@ -93,7 +72,7 @@ class AIController {
   // ---------- AI tower ----------
   tower(ac) {
     const g = this.game;
-    if (ac.isArr && ac.state === 'taxi') { this.cmd(ac, 'ho'); return; } // vacated: over to ground
+    if (ac.isArr && ac.state === 'taxi') return; // vacating: handed to Ground automatically once clear
     if (ac.state === 'ground') {
       if (ac.cleared && this.runwayFree(ac)) {
         this.cmd(ac, 'cto');
@@ -101,7 +80,7 @@ class AIController {
       }
       return;
     }
-    if (ac.state === 'lineup' && this.runwayFree(ac, true)) {
+    if (ac.state === 'lineup' && !ac.ctoPending && this.runwayFree(ac, true)) {
       this.cmd(ac, 'cto');
       this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' };
       return;
@@ -123,7 +102,7 @@ class AIController {
     const last = this.lastTakeoff[phys];
     if (last && g.time - last.t < (last.heavy ? 120 : 60)) return false;
     return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
-      ['lineup', 'takeoff', 'landed'].includes(o.state) ||
+      ['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
       (o.isArr && o.airborne && o.ils && o.finalGeometry().along < 4 && o.finalGeometry().along > -1) ||
       (!o.isArr && o.airborne && o.alt < 1000)));
   }

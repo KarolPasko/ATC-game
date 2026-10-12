@@ -204,13 +204,16 @@ class CommandProcessor {
         if (cmd === 'CTO' && !ac.cleared) return 'unable, we have not received our IFR clearance yet';
         if (ac.state !== 'ground' && ac.state !== 'lineup') return `unable, we are not at the holding point yet${ac.state === 'stand' ? ' — still on stand ' + ac.stand : ''}`;
         if (r !== ac.rwy) return `unable, we are at the holding point for runway ${ac.rwy}`;
-        ac.x = ac.runway.thr.x; ac.y = ac.runway.thr.y;
-        ac.hdg = ac.tgtHdg = ac.runway.heading;
-        if (!this.opts.ai) g.checkRunwayClear(ac);
-        if (cmd === 'LU') { ac.state = 'lineup'; return `lining up runway ${r}`; }
-        ac.state = 'takeoff';
-        ac.spd = 0;
-        return `cleared for take-off runway ${r}`;
+        if (ac.state === 'lineup' && cmd === 'LU') return 'already lined up';
+        if (ac.state === 'lineup' && ac.ctoPending) return 'already cleared for take-off';
+        if (!this.opts.ai && ac.state === 'ground') g.checkRunwayClear(ac);
+        // From the holding point the aircraft taxis onto the runway; a take-off clearance rolls once aligned.
+        if (ac.state === 'ground') ac.beginLineup(cmd === 'CTO');
+        else if (cmd === 'CTO') {
+          if (ac.lining) ac.ctoPending = true;
+          else { ac.state = 'takeoff'; ac.spd = 0; ac.hdg = ac.tgtHdg = ac.runway.heading; }
+        }
+        return cmd === 'LU' ? `lining up runway ${r}` : `cleared for take-off runway ${r}`;
       }
       case 'HOLD': {
         if (this.needAir(ac)) return this.needAir(ac);

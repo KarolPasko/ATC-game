@@ -3,7 +3,7 @@ const GS_FT_PER_NM = Math.tan(Geo.rad(3)) * 6076.12; // ~318 ft/nm
 const MAX_BANK = 25; // deg
 
 // Used when simulating a "ghost" copy of an aircraft for path prediction.
-const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {}, groundBlocker() { return null; } };
+const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {}, groundBlocker() { return null; }, onVacated() {}, onParked() {}, onReachedHoldingPoint() {} };
 
 class Aircraft {
   constructor(o) {
@@ -88,8 +88,10 @@ class Aircraft {
     this.age += dt;
     switch (this.state) {
       case 'ground':
-      case 'lineup':
       case 'gone':
+        return;
+      case 'lineup':
+        if (this.lining) this.lineupStep(dt);
         return;
       case 'stand':
       case 'pushback':

@@ -135,6 +135,11 @@ class Radar {
     c.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       this.press = null;
+      if (g.viewMode === 'ground') {
+        // Right-click an aircraft on the chart for its runway/ground instructions.
+        const hit = this.hitAircraft(e.offsetX, e.offsetY);
+        if (hit) { g.select(hit); return this.openAircraftGroundMenu(hit, e.offsetX, e.offsetY); }
+      }
       const ac = g.selected;
       if (!ac || ac.state === 'gone') return;
       if (g.viewMode === 'ground') {
@@ -191,6 +196,30 @@ class Radar {
     const w = this.menu.offsetWidth, h = this.menu.offsetHeight;
     this.menu.style.left = Math.min(sx + 8, this.w - w - 8) + 'px';
     this.menu.style.top = Math.min(sy + 8, this.h - h - 8) + 'px';
+  }
+
+  // Ground chart: right-click an aircraft.
+  openAircraftGroundMenu(ac, sx, sy) {
+    const g = this.game, cs = ac.cs, items = [];
+    if (!g.userOwns(ac)) {
+      this.showMenu(cs, `with ${POSITIONS[ac.owner].name}`, [['Not on your frequency', '']], sx, sy);
+      return;
+    }
+    if (ac.state === 'stand' && !ac.isArr) {
+      if (!ac.cleared) items.push(['Cleared as filed', `${cs} caf`]);
+      else items.push(['Push back, face east', `${cs} pb e`], ['Push back, face west', `${cs} pb w`], [`Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
+    }
+    if (ac.state === 'ground') items.push([`Line up runway ${ac.rwy}`, `${cs} lu`], [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
+    if (ac.state === 'lineup') items.push(ac.ctoPending ? ['Already cleared for take-off', ''] : [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
+    if (ac.state === 'taxi') {
+      if (ac.taxiPath.length) items.push(ac.holdPos ? ['Continue taxi', `${cs} cont`] : ['Hold position', `${cs} hpos`]);
+      else items.push([ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
+    }
+    if (ac.isArr && ac.airborne && ac.ils && !ac.landClr) items.push([`Cleared to land ${ac.rwy}`, `${cs} cl`]);
+    if (ac.isArr && ac.airborne) items.push(['Go around', `${cs} ga`]);
+    if (ac.airborne && !ac.isArr && ac.owner === 'TWR') items.push(['Contact Departure', `${cs} ho`]);
+    if (!items.length) items.push(['No instructions available', '']);
+    this.showMenu(`${cs} ${ac.type}`, ac.state.toUpperCase(), items, sx, sy);
   }
 
   // Ground chart: right-click a holding point or stand.

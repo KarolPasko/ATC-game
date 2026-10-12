@@ -253,16 +253,32 @@ class Game {
   }
 
   // ---------- ground events ----------
+  // At the runway holding point Ground hands the departure to Tower automatically.
   onReachedHoldingPoint(ac) {
     ac.waitSince = this.time;
-    this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}${ac.owner === 'TWR' ? ', ready for departure' : ''}`);
+    if (ac.owner !== 'GND') {
+      this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
+      return;
+    }
+    if (this.userOwns(ac) && this.position !== 'ALL') {
+      if (this.position === 'GND') this.stats.departed++;
+      this.addScore(10, `${ac.cs} taxied to holding point ${ac.gnode}`);
+    }
+    if (this.position !== 'ALL') this.log(`Ravenwood Ground: ${ac.cs}, holding point ${ac.gnode}, contact Tower ${POSITIONS.TWR.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
+    this.transfer(ac, 'TWR', { ai: true, silent: this.position === 'ALL' });
+    if (this.position === 'ALL') this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
   }
 
+  // Once an arrival is clear of the runway, Tower hands it to Ground automatically.
   onVacated(ac) {
     ac.waitSince = this.time;
-    this.pilotSay(ac, ac.owner === 'GND'
-      ? `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`
-      : `runway ${ac.rwy} vacated via ${ac.vacatedVia}`);
+    if (ac.owner !== 'TWR') {
+      this.pilotSay(ac, `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`);
+      return;
+    }
+    if (this.position !== 'ALL') this.log(`Ravenwood Tower: ${ac.cs}, vacated via ${ac.vacatedVia}, contact Ground ${POSITIONS.GND.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
+    this.transfer(ac, 'GND', { ai: true, silent: this.position === 'ALL' });
+    if (this.position === 'ALL') this.pilotSay(ac, `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`);
   }
 
   onParked(ac) {
@@ -310,7 +326,7 @@ class Game {
 
   runwayOccupant(ac) {
     return this.aircraft.find((o) => o !== ac && o.runway?.phys === ac.runway.phys &&
-      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.airborne && !o.isArr && o.alt < 300)));
+      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) || (o.airborne && !o.isArr && o.alt < 300)));
   }
 
   // An arrival reaching the threshold with the runway still occupied must go around.
@@ -327,7 +343,7 @@ class Game {
 
   checkRunwayClear(ac) {
     const busy = this.aircraft.find((o) => o !== ac && o.runway?.phys === ac.runway.phys && (
-      ['lineup', 'takeoff', 'landed'].includes(o.state) ||
+      ['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
       (o.est && o.finalGeometry().along < 2.5) ||
       (o.state === 'air' && !o.isArr && o.alt < 300)));
     if (busy) this.addScore(-50, `Runway ${ac.rwy} not clear — ${busy.cs} is on the runway / short final`);
