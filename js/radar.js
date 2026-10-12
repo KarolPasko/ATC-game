@@ -373,39 +373,75 @@ class Radar {
     }
   }
 
+  // Waypoints, EuroScope style: small crisp symbols, labels placed around the symbol so they don't overlap
+  // (higher-priority labels win), and approach altitudes on a second, smaller line when zoomed in.
   drawFixes() {
-    const ctx = this.ctx, s = this.view.scale;
-    const hover = this.game.selected && this.mouse.x >= 0 ? this.hitFix(this.mouse.x, this.mouse.y) : null;
-    const visible = [];
-    ctx.font = '10px "JetBrains Mono", monospace';
-    // IF/FAF/SID fixes are only shown for runways in use.
+    const ctx = this.ctx, s = this.view.scale, g = this.game;
+    const hover = g.selected && this.mouse.x >= 0 ? this.hitFix(this.mouse.x, this.mouse.y) : null;
+    const sel = g.selected;
+    const onRoute = new Set(sel && sel.state !== 'gone' ? [...sel.route, sel.hold?.fix].filter(Boolean) : []);
+    // IAF/IF/FAF/SID fixes only for the runways in use, unless they are on the selected aircraft's route.
     const active = new Set();
-    for (const id of this.game.activeRunways()) { const a = APPROACHES[id]; [...a.iafs, a.if, a.faf, SID_FIRST[id]].forEach((n) => active.add(n)); }
+    for (const id of g.activeRunways()) { const a = APPROACHES[id]; [...a.iafs, a.if, a.faf, SID_FIRST[id]].forEach((n) => active.add(n)); }
+    const items = [];
     for (const f of Object.values(FIXES)) {
       const p = this.toScreen(f);
       if (p.x < -40 || p.y < -40 || p.x > this.w + 40 || p.y > this.h + 40) continue;
-      const minor = f.type === 'if' || f.type === 'faf' || f.type === 'sid';
-      if (minor && (s < 12 || !active.has(f.name))) continue;
-      const col = f.type === 'entry' ? COLORS.entry : f.type === 'exit' ? COLORS.exit : f.type === 'iaf' ? COLORS.iaf : f.type === 'vor' ? COLORS.vor : COLORS.fix;
-      const sz = minor ? 3 : 4.5;
-      ctx.strokeStyle = f === hover ? '#ffffff' : col;
+      const procFix = ['iaf', 'if', 'faf', 'sid'].includes(f.type);
+      if (procFix && !active.has(f.name) && !onRoute.has(f.name)) continue;
+      if ((f.type === 'faf' || f.type === 'sid') && s < 10 && !onRoute.has(f.name)) continue;
+      const prio = onRoute.has(f.name) ? 5 : procFix ? 4 : f.type === 'entry' || f.type === 'exit' ? 3 : f.type === 'vor' ? 2 : 1;
+      items.push({ f, p, prio });
+    }
+    // Symbols
+    for (const { f, p } of items) {
+      const col = f === hover ? '#ffffff' : f.type === 'entry' ? COLORS.entry : f.type === 'exit' ? COLORS.exit
+        : ['iaf', 'if', 'faf'].includes(f.type) ? COLORS.iaf : f.type === 'vor' ? COLORS.vor : COLORS.fix;
+      ctx.strokeStyle = col; ctx.fillStyle = col;
       ctx.lineWidth = f === hover ? 2 : 1;
       ctx.beginPath();
       if (f.type === 'vor') {
         // VOR/DME: hexagon in a square with a centre dot
         for (let i = 0; i < 6; i++) { const a = (Math.PI / 3) * i; const q = [p.x + Math.cos(a) * 6, p.y + Math.sin(a) * 6]; i ? ctx.lineTo(...q) : ctx.moveTo(...q); }
         ctx.closePath(); ctx.rect(p.x - 6, p.y - 5.2, 12, 10.4);
-        ctx.fillStyle = col; ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+        ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+        ctx.stroke();
       } else {
+        const sz = f.type === 'sid' ? 2.5 : f.type === 'faf' || f.type === 'if' ? 3.5 : 4;
         ctx.moveTo(p.x, p.y - sz); ctx.lineTo(p.x + sz, p.y + sz * 0.8); ctx.lineTo(p.x - sz, p.y + sz * 0.8); ctx.closePath();
+        if (f.type === 'faf') ctx.fill(); else ctx.stroke(); // FAF filled
       }
-      ctx.stroke();
-      if (HOLDS[f.name] && s >= 5) { ctx.fillStyle = col; ctx.fillRect(p.x - 1, p.y + sz + 2, 2, 2); }
-      ctx.fillStyle = f === hover ? '#ffffff' : COLORS.fixLabel;
-      let label = f.name;
-      if (f.alt && s >= 7) label += ` A${String(f.alt / 100).padStart(3, '0')}`;
-      ctx.fillText(label, p.x + 6, p.y + 10);
-      visible.push({ f, x: p.x, y: p.y, lx: p.x + 6, ly: p.y + 10, lw: ctx.measureText(label).width });
+      if (HOLDS[f.name] && s >= 5) ctx.fillRect(p.x - 1, p.y + 7, 2, 2);
+    }
+    // Labels, highest priority first, each at the first free spot around its symbol.
+    const placed = [];
+    const overlaps = (r) => placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+    const visible = [];
+    items.sort((a, b) => b.prio - a.prio);
+    for (const { f, p, prio } of items) {
+      ctx.font = '10px "JetBrains Mono", monospace';
+      const name = f.name;
+      const w = ctx.measureText(name).width;
+      const alt = sel && onRoute.has(f.name) ? (sel.altCons?.[f.name] ?? f.alt) : f.alt;
+      const altText = alt && (s >= 9 || onRoute.has(f.name)) ? (alt >= AIRPORT.transAlt + 500 ? `FL${Math.round(alt / 100)}` : String(alt)) : '';
+      const h = altText ? 21 : 11;
+      const cands = [[7, 3], [7, -h + 3], [-w - 7, 3], [-w - 7, -h + 3], [-w / 2, 9], [-w / 2, -h - 6], [9, -h / 2 + 3], [-w - 9, -h / 2 + 3]];
+      let spot = null;
+      for (const [dx, dy] of cands) {
+        const r = { x0: p.x + dx - 1, y0: p.y + dy - 1, x1: p.x + dx + w + 1, y1: p.y + dy + h };
+        if (!overlaps(r)) { spot = [dx, dy, r]; break; }
+      }
+      if (!spot && prio < 4 && f !== hover) { visible.push({ f, x: p.x, y: p.y, lx: p.x, ly: p.y, lw: 0 }); continue; }
+      const [dx, dy, r] = spot || [cands[0][0], cands[0][1], { x0: p.x + 6, y0: p.y + 2, x1: p.x + 7 + w, y1: p.y + 2 + h }];
+      placed.push(r);
+      ctx.fillStyle = f === hover ? '#ffffff' : onRoute.has(f.name) ? '#c9d8e4' : COLORS.fixLabel;
+      ctx.fillText(name, p.x + dx, p.y + dy + 9);
+      if (altText) {
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillStyle = f === hover ? '#ffffff' : '#7f8fa0';
+        ctx.fillText(altText, p.x + dx, p.y + dy + 19);
+      }
+      visible.push({ f, x: p.x, y: p.y, lx: p.x + dx, ly: p.y + dy + 9, lw: w });
     }
     this.visibleFixes = visible;
   }
