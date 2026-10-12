@@ -9,9 +9,14 @@ AIRPORTS.EGRV = {
   notes: `<p>Ravenwood International is fictional. Parallel runways 08L/26R (north) and 08R/26L (south) are 1.4 km apart with the
     terminal between them, and both take arrivals and departures. Departures use holding points A1/A7 (north runway) and B1/B7
     (south); arrivals vacate via the rapid exits K1–K4 and M1–M4 or the connectors.</p>
-    <p>Arrivals enter on 11 STARs and fly an RNAV T-bar transition to the ILS (outer IAF, straight-in IAF, IF, FAF). The north
-    runway's approach is 1000 ft higher than the south one's, so arrivals stay separated until established. SIDs climb to
-    6000 ft (transition altitude 6000 ft) and splay 15° away from the parallel runway.</p>`,
+    <p>Arrivals enter on 11 STARs. <code>app RWY</code> gives them a pre-made transition from the side they are on: a
+    downwind (DOLVA, SAVOK, KIRNA, ZELOT), a base leg (NORAX, SUREK, KELVO, ZUBIN) or straight in, with curved legs that end
+    lined up with the runway at the IF, so nobody cuts across the airfield. The north runway's approach is 1000 ft higher than
+    the south one's, so arrivals stay separated until established. SIDs climb to 6000 ft (transition altitude 6000 ft) and
+    splay 15° away from the parallel runway.</p>
+    <p><b>General aviation</b> lives on the flying club apron west of the terminal, off taxiway E (stands 91–96, taxilane G). Club aircraft
+    fly circuits on the south runway, on the south side (away from the north runway), and take the B2/B5 intersections. At
+    most two are in the circuit at once (one in high traffic).</p>`,
 
   // Light aircraft take the intersections nearest the GA apron instead of the full length.
   depHoldFor(ac) {

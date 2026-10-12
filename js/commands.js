@@ -20,7 +20,7 @@ const COMMAND_HELP = [
   ['S 210 / S RS', 'Speed / resume normal speed'],
   [`DCT ${EX.fix}`, 'Proceed direct to waypoint (then continue route)'],
   [`I ${EX.arr} / ILS ${EX.arr}`, 'Cleared ILS approach (intercept from vectors)'],
-  [`APP ${EX.arr} [VIA ${EX.fix}]`, 'Cleared full approach: fly IAF→IF→FAF, descend via, then ILS'],
+  [`APP ${EX.arr} [VIA ${EX.fix}]`, 'Cleared approach: a pre-made transition from the side the aircraft is on (downwind, base or straight-in), curving onto the final at the IF; descends via, then ILS'],
   ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],

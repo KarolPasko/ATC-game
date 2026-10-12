@@ -213,6 +213,12 @@
         <tr><td><b>Approach</b></td><td>Arrivals from the entry fix: descend, sequence, vector or clear the approach, then transfer
           to Tower (<code>ho</code>) once on the ILS. Departures check in after Tower transfers them: climb them and hand them to
           Control (<code>ho</code>) above FL100, 20 nm out.</td></tr>
+        <tr><td><b>Circuits</b></td><td>Light aircraft from the GA ramp (yellow strips, squawk 7010) ask Ground to taxi for a
+          number of circuits. Tower clears them for take-off, then for each touch and go (<code>cl</code>) when they call
+          downwind or final; without it they go around. Fit them between the airliners with <code>ext</code> (extend downwind),
+          <code>base</code> (turn base now) or <code>orbit</code>, or end the detail early with <code>fs</code> (full stop).
+          They fly 1000 ft circuits on the side away from the other runway and are separated visually, so IFR separation does not
+          apply, but keep them out of the way of a jet on final: light aircraft need 2–3 minutes behind a medium or heavy.</td></tr>
         <tr><td><b>Combined</b></td><td>You do everything. Frequency changes between your positions and landing clearances
           are automatic, and <b>Auto taxi</b> can do the taxiing.</td></tr>
       </table>
@@ -224,7 +230,13 @@
       <table id="help-table"></table>
       <h2>Scoring</h2>
       <p>Landing +100 · handoff to Control +100 (early +50/+20) · Tower→Departure +30 · Approach→Tower +20 · go-around −10 · runway not clear −50 · separation loss −50 · wake spacing −30 ·
-        departure leaving without handoff −50 · arrival lost −100.</p>
+        departure leaving without handoff −50 · arrival lost −100 · circuit flown +10 · circuit detail complete +30 · airprox −50.</p>
+      <h2>Approach transitions</h2>
+      <p><code>app RWY</code> clears an arrival for a pre-made transition from the side of the airport it is on: a downwind leg
+        past the airfield, a base leg, or straight in from behind. Each one ends with a curved leg that rolls out exactly on the
+        extended centreline at the IF, so aircraft never cut across the airfield at an angle. Right-click a fix for <i>Cleared
+        approach … via</i>, or type <code>app RWY via FIX</code>, to pick the entry yourself; the scope draws the transitions for the arrival
+        runways.</p>
       <p class="tip">Tip: arrivals descend on their own only after <code>app RWY</code>. With <code>i RWY</code> you must vector
         them onto the localizer (≈30° intercept) and descend them to 3000–4000 ft first — the glideslope is captured from below.</p>
     </div>

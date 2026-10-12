@@ -5,12 +5,13 @@ ground chart and a command line. AI controllers work the positions you don't. Th
 
 | Airport | What it is |
 | --- | --- |
-| **EGRV Ravenwood International** | Fictional. Parallel runways 08L/26R and 08R/26L with the terminal between them, both used for arrivals and departures. 11 STARs and 8 SIDs per direction. |
-| **EGCC Manchester** | Real layout, approximated. Runways 05L/23R and 05R/23L, 390 m apart. In dual-runway ops arrivals land on 23R and departures leave from 23L, so departures cross runway 23R. MIRSI, ROSUN and DAYNE holds; SIDs to EKLAD, ASMIM, DESIG, SANBA, LISTO, MONTY and KUXEM. |
+| **EGRV Ravenwood International** | Fictional. Parallel runways 08L/26R and 08R/26L with the terminal between them, both used for arrivals and departures. 11 STARs and 8 SIDs per direction. Flying club apron with up to two aircraft in the circuit. |
+| **EGCC Manchester** | Real airport, from the UK AIP where possible. Runways 05L/23R (3048 m) and 05R/23L (3050 m), 390 m apart and staggered 1849 m, with displaced thresholds. In westerly dual-runway ops arrivals land on 23R and departures leave from 23L, so departures cross runway 23R (easterly: arrivals on 05R cross 05L). ROSUN, MIRSI and DAYNE holds; SIDs to EKLAD, KUXEM, SANBA, LISTO, POL, SONEX, ASMIM and DESIG. GA on the South Side. |
 
-Manchester's runway geometry, holds, navaids and SID end points are real, but their positions are approximate. The
-approach transition fixes and first SID fixes are simplified coded points (`FF23R`, `IF23R`, `SE23R`, `MC231` …).
-Not for real-world navigation.
+Manchester's runway lengths, displaced thresholds, spacing and stagger, the airport reference point, the holds, the local
+VORs and several SID and approach fixes (TICZU, NODUC, TABLY, LISTO, DESIG, SANBA …) come from the UK AIP and charts.
+STAR entry points, some SID fixes and the taxiway layout are approximations, and the downwind/base transition fixes are
+simplified coded points (`DN23R`, `NW23R`, `C05RI`, `MC231` …). Not for real-world navigation.
 
 ## Run it
 
@@ -126,11 +127,14 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `s 210` / `s rs` | Assign speed / resume normal speed |
 | `dct NORAX` | Direct to a waypoint, then continue the route |
 | `i 26L` / `ils 26L` | Cleared ILS: intercept the localizer from vectors |
-| `app 26R [via FIX]` | Cleared for the approach: the best entry (straight-in IAF, outer IAF, IF or FAF) is chosen from the aircraft's position, or name it; descends via the published altitudes, then ILS |
+| `app 26R [via FIX]` | Cleared for the approach on a pre-made transition from the aircraft's side of the airport (downwind, base or straight in), ending lined up with the runway at the IF; or name the entry fix. Descends via the published altitudes, then ILS |
 | `hold [fix] [inbound] [L\|R] [1.5M]` | Hold as published, or with your own inbound course, turns and leg time |
 | `res` | Resume own navigation on the route |
 | `ga` | Go around |
-| `cl` | Cleared to land (tower) |
+| `cl` | Cleared to land (tower). Circuit traffic: cleared touch and go (cleared to land on the last circuit) |
+| `fs` | Circuit traffic: make this circuit a full stop |
+| `ext` / `base` | Circuit traffic: extend downwind (orbits if it gets far out) / turn base now |
+| `orbit [l\|r]` | Circuit traffic: one orbit away from the runway, then carry on |
 | `asm` | Assume an aircraft handed to you |
 | `ack` | Acknowledge a MAYDAY / PAN call |
 | `ho` | Transfer: Ground → Tower, Tower → Ground (vacated arrivals), Tower → Departure, Approach → Tower, Departure → Control |
@@ -140,6 +144,29 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos gnd|twr|app|all`, `.pause`, `.speed 1|2|4`, `.config` (Ravenwood
 `26|08`, Manchester `23|05|23S|05S`), `.traffic low|med|high`, `.routes all|sel|off`, `.emg [type]|off|rare|normal`,
 `.rbl clear`, `.procs`, `.voice`, `.help`, `.restart`.
+
+### Approach transitions
+
+`app RWY` clears an arrival for a pre-made transition chosen from where it is: a downwind leg past the airfield, a base leg,
+or straight in from behind. Each transition ends with a constant-radius turn (an RF leg) that rolls out exactly on the
+extended centreline at the IF, 10–13 nm out, so aircraft no longer cut across the airfield or join the final at a wide
+angle. The localizer is captured only once the aircraft is on the straight part of the final. Name the entry with
+`app 23R via NW23R`, or right-click a fix and pick *Cleared approach … via*. The scope draws the transitions for the arrival
+runways.
+
+### General aviation circuits
+
+Light aircraft (Cessna 152/172, Piper Warrior, Diamond Star, Cirrus SR22) start on the GA ramp (stands 91–96) with
+yellow VFR strips and squawk 7010, and ask Ground to taxi for 2–5 circuits. Tower clears them for take-off (at Ravenwood
+from an intersection near the ramp), then they fly the circuit at 1000 ft about 1 nm from the runway, on the side away from the other runway:
+upwind, crosswind, downwind, base and final. They call downwind and final. Clear each touch and go with `cl` (they go
+around without it, or if the runway is occupied), shape them around the jets with `ext`, `base` and `orbit`, and end the
+detail early with `fs`. After the last circuit they land and taxi back to the ramp.
+
+Traffic is kept realistic. At Ravenwood at most two are in the circuit at once (one in high traffic). Manchester needs
+prior permission for circuit training, so there is at most one, and none in high traffic. The AI tower only lets them turn
+in when no IFR arrival is within 9 nm, and lets waiting departures go first. Light aircraft need 2 minutes behind a medium
+and 3 behind a heavy (wake penalty), and two aircraft closer than 0.3 nm and 300 ft count as an airprox.
 
 ### Emergencies
 
@@ -161,10 +188,10 @@ Practise one with `.emg engine`, `.emg fuel` and so on.
 ## Realism
 
 - **Route lines** show only for the selected aircraft by default (top bar: *Routes: selected only / all mine / off*).
-- **Procedures**: at Ravenwood, 11 STARs and 8 SIDs per runway direction; every runway end has an RNAV T-bar approach (a
-  straight-in IAF and an outer IAF joining the final at 90°, feeding the IF and FAF), with the north runway's approach 1000 ft
-  higher than the south one's. At Manchester, 6 STARs through the MIRSI, ROSUN and DAYNE holds (minimum FL70) to a T-bar
-  with an outer IAF on each side, and 7 SIDs per runway climbing to 5000 ft.
+- **Procedures**: at Ravenwood, 11 STARs and 8 SIDs per runway direction; every runway end has downwind, base and straight-in
+  transitions with RF arcs onto the final, with the north runway's approach 1000 ft higher than the south one's. At
+  Manchester, 9 STARs through the ROSUN, MIRSI and DAYNE holds (minimum FL70) to downwind or base transitions on either
+  side, and 6 SIDs off the 23s and 4 off the 05s climbing to 5000 ft (SANBA jets only, LISTO props only off the 23s).
 - **Traffic**: arrivals and departures come at random intervals, with an occasional inbound wave, from weighted airlines with
   realistic fleets (Manchester sees more Jet2, Ryanair, easyJet and TUI).
 - **AI approach** sequences arrivals with speed control and holds them first come, first served when the runway is busy.
@@ -182,7 +209,8 @@ Practise one with `.emg engine`, `.emg fuel` and so on.
 
 Landing +100 · handoff to Control +100 (early +50/+20) · Tower→Departure +30 · Approach→Tower +20 · go-around −10 · runway not clear −50 ·
 crossing with traffic landing or departing −50 · separation loss −50 · wake spacing −30 · departure leaving without a handoff −50 ·
-arrival lost −100 · emergency handled +100 (quick medical / fuel +50) · emergency acknowledged within 45 s +20.
+arrival lost −100 · emergency handled +100 (quick medical / fuel +50) · emergency acknowledged within 45 s +20 ·
+circuit flown +10 · circuit detail complete +30 · airprox −50.
 
 ## Code layout
 
@@ -193,7 +221,8 @@ arrival lost −100 · emergency handled +100 (quick medical / fuel +50) · emer
 | `js/airports/egrv.js` | Ravenwood: runways, fixes, procedures, configurations, ground layout, chart decoration, video map |
 | `js/airports/egcc.js` | Manchester: the same, from approximate real positions |
 | `js/airport.js` | Picks the airport (URL hash or last used) and builds it |
-| `js/aircraft.js` | Flight model, route following, localizer and glideslope capture, holds |
+| `js/aircraft.js` | Flight model, route following (including RF arcs), localizer and glideslope capture, holds |
+| `js/circuit.js` | VFR circuit flying: legs, touch and go, orbits, full stop |
 | `js/commands.js` | Command line parser |
 | `js/ground.js` | Taxi graph and routing, runway crossings, ground movement and the ground chart drawing |
 | `js/emergency.js` | Emergency types, MAYDAY/PAN calls and their handling |

@@ -337,13 +337,21 @@ class UI {
     if (html !== this._strips) { $('strips').innerHTML = html; this._strips = html; }
   }
 
+  // VFR circuit traffic: which way round, where they are and what is left.
+  circuitPlan(ac) {
+    const c = ac.circuit, hand = (AIRPORT.ga?.side?.[ac.rwy] ?? -1) > 0 ? 'right-hand' : 'left-hand';
+    if (c) return `${hand} circuits ${ac.rwy} · ${c.orbit ? 'orbiting' : c.phase} · ${c.left > 0 ? `${c.left} touch and go${c.left > 1 ? 'es' : ''} then full stop` : 'full stop'}`;
+    if (ac.isArr) return 'full stop, taxi to the GA ramp';
+    return `${ac.circuits ?? 3} ${hand} circuits ${ac.rwy}, 1000 ft`;
+  }
+
   renderCard() {
     const ac = this.game.selected;
     let html, quick = '';
     if (!ac) {
       html = '<div class="empty">No aircraft selected.<br>Click a target or strip, or press <kbd>Tab</kbd>.</div>';
     } else {
-      const route = (ac.isArr ? [ac.star.slice(0, 5)] : []).concat(ac.route).join(' ') || '—';
+      const route = ac.vfr ? this.circuitPlan(ac) : (ac.isArr ? [ac.star.slice(0, 5)] : []).concat(ac.route).join(' ') || '—';
       const btn = (label, cmd) => `<button data-cmd="${esc(cmd)}">${esc(label)}</button>`;
       if (!this.game.userOwns(ac)) {
         quick = `<span class="notmine">With ${esc(POSITIONS[ac.owner].name)}${ac.owner !== 'CTR' ? ' (AI)' : ''}</span>`;
