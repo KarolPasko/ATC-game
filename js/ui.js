@@ -279,7 +279,9 @@ class UI {
     const sel = ac === g.selected ? ' sel' : '';
     const conf = ac.emg && !ac.emg.done ? ' emergency' : ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
-    if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
+    if (ac.circuit) status = `CCT ${ac.circuitLeg()}${ac.circuit.extend ? ' EXT' : ''}${ac.circuit.clr ? ' CLRD' : ''} · ${ac.circuit.left > 0 ? `${ac.circuit.left} T&G` : 'FULL STOP'}`;
+    else if (ac.state === 'touchgo') status = 'TOUCH & GO';
+    else if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
     else if (ac.state === 'pushback') status = 'PUSHBACK';
     else if (ac.state === 'taxi') status = ac.holdShort || ac.crossing || !ac.taxiPath.length || ac.holdPos ? ac.groundStatus(g) : ac.isArr ? `TAXI S${ac.stand}` : `TAXI ${ac.taxiTarget}`;
     else if (ac.state === 'parked') status = `ON STAND ${ac.stand}`;
@@ -293,7 +295,7 @@ class UI {
     else if (ac.mode === 'hold') status = `HOLD ${ac.hold.fix}`;
     else if (ac.mode === 'heading') status = `H${Geo.fmtHdg(ac.tgtHdg)}`;
     else status = ac.route[0] || '';
-    const proc = ac.isArr ? ac.star : ac.sid;
+    const proc = ac.vfr ? 'VFR' : ac.isArr ? ac.star : ac.sid;
     const mine = g.userOwns(ac) ? '' : ' notmine';
     return `<div class="strip ${ac.isArr ? 'arr' : 'dep'}${sel}${conf}${mine}" data-cs="${esc(ac.cs)}">
       <div class="cs">${esc(ac.cs)}<span class="wt">${esc(ac.type)}/${ac.wake}</span><span class="own own-${ac.owner}">${ac.owner}</span></div>
@@ -322,12 +324,15 @@ class UI {
 
   renderStrips() {
     const g = this.game;
-    const arr = g.aircraft.filter((a) => a.isArr && a.state !== 'gone');
-    const dep = g.aircraft.filter((a) => !a.isArr && a.state === 'air');
-    const gnd = g.aircraft.filter((a) => !a.isArr && a.state !== 'air' && a.state !== 'gone');
+    const live = g.aircraft.filter((a) => a.state !== 'gone');
+    const vfr = live.filter((a) => a.vfr && (a.circuit || a.state === 'touchgo'));
+    const arr = live.filter((a) => a.isArr && !vfr.includes(a));
+    const dep = live.filter((a) => !a.isArr && a.state === 'air' && !vfr.includes(a));
+    const gnd = live.filter((a) => !a.isArr && a.state !== 'air' && !vfr.includes(a));
     const html = `
       <h3><span class="sw arr"></span>Arrivals <em>${arr.length}</em></h3>${arr.map((a) => this.strip(a)).join('') || '<p class="none">none</p>'}
       <h3><span class="sw dep"></span>Departures <em>${dep.length}</em></h3>${dep.map((a) => this.strip(a)).join('') || '<p class="none">none</p>'}
+      ${vfr.length ? `<h3><span class="sw vfr"></span>VFR circuit <em>${vfr.length}</em></h3>${vfr.map((a) => this.strip(a)).join('')}` : ''}
       <h3><span class="sw gnd"></span>Ground / Delivery <em>${gnd.length}</em></h3>${gnd.map((a) => this.strip(a)).join('') || '<p class="none">none</p>'}`;
     if (html !== this._strips) { $('strips').innerHTML = html; this._strips = html; }
   }
@@ -356,6 +361,12 @@ class UI {
         quick = btn('Contact Tower', 'ho') + btn('Taxi…', 'taxi ');
       } else if (ac.state === 'ground' || ac.state === 'lineup') {
         quick = (!ac.cleared ? btn('CAF', 'caf') : '') + (ac.state === 'ground' ? btn('Line up', 'lu') : '') + btn('Take-off', 'cto');
+      } else if (ac.state === 'air' && ac.circuit) {
+        const c = ac.circuit;
+        if (!c.clr) quick += btn(c.left > 0 ? 'Cleared T&G' : 'Cleared to land', 'cl');
+        if (c.left > 0) quick += btn('Full stop', 'fs');
+        quick += c.extend ? btn('Turn base', 'base') : btn('Extend downwind', 'ext');
+        quick += btn('Orbit', 'orbit');
       } else if (ac.state === 'air') {
         quick = btn('Heading…', 'h ') + btn('Alt…', 'a ') + btn('Speed…', 's ') + btn('Direct…', 'dct ');
         quick += btn('Hold…', 'hold ');

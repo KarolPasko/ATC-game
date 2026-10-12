@@ -13,6 +13,12 @@ AIRPORTS.EGRV = {
     runway's approach is 1000 ft higher than the south one's, so arrivals stay separated until established. SIDs climb to
     6000 ft (transition altitude 6000 ft) and splay 15° away from the parallel runway.</p>`,
 
+  // Light aircraft take the intersections nearest the GA apron instead of the full length.
+  depHoldFor(ac) {
+    if (ac.vfr) return { '26L': 'B5', '08R': 'B2', '26R': 'A5', '08L': 'A2' }[ac.rwy] || null;
+    return null;
+  },
+
   build() {
     Object.assign(AIRPORT, {
       icao: 'EGRV', name: 'Ravenwood International', city: 'Ravenwood',
@@ -20,6 +26,12 @@ AIRPORTS.EGRV = {
       axis: 80, defaultConfig: '26', pushDirs: { E: 'east', W: 'west' },
       freqs: { GND: '121.800', TWR: '118.500', APP: '119.725', CTR: '128.400' },
       tmaLabel: 'RAVENWOOD TMA  2500-FL195', ctrLabel: 'EGRV CTR SFC-2500',
+      // General aviation: the flying club on the west apron flies circuits on the south runway, south of it.
+      ga: {
+        cap: { low: 2, med: 2, high: 1 },
+        runway: { 26: '26L', '08': '08R' },
+        side: { '26L': -1, '08R': 1 },
+      },
     });
 
     // ---- Runways: two parallels 1389 m apart, 3704 m long ----
@@ -220,7 +232,7 @@ AIRPORTS.EGRV = {
   // P and Q, cross taxiways E and F, and the terminal between the runways.
   chart: { fit: { w: 4200, h: 1900, cx: 0, cy: 0 } },
   ground(G) {
-    const { node, edge, chain, hold, holdingPoints, exits, stands, signs } = G;
+    const { node, edge, chain, hold, holdingPoints, depHolds, exits, stands, signs } = G;
     const RWY_V = 694.5, TWY_V = 494.5, HOLD_V = 604.5, EXIT_V = 545, LANE_V = 380, STAND_V = 262;
     const sides = [
       { s: 1, twy: 'A', lane: 'P', link: 'J', exitPre: 'K', rwyW: '08L', rwyE: '26R', stand0: 1 },
@@ -251,6 +263,8 @@ AIRPORTS.EGRV = {
       });
       holdingPoints[sd.rwyW] = `${sd.twy}1`;
       holdingPoints[sd.rwyE] = `${sd.twy}7`;
+      depHolds[sd.rwyW] = [`${sd.twy}1`, `${sd.twy}2`, `${sd.twy}3`]; // full length and intersections
+      depHolds[sd.rwyE] = [`${sd.twy}7`, `${sd.twy}6`, `${sd.twy}5`];
       // Rapid exit taxiways (angled ~30°)
       RAPID.forEach(([ur, ut, dir], i) => {
         const name = `${sd.exitPre}${i + 1}`;
@@ -298,6 +312,17 @@ AIRPORTS.EGRV = {
       for (let i = 1; i < list.length; i++) edge(list[i - 1], list[i], name);
       signs.push({ text: name, u: u + 16, v: 120 });
     }
+    // GA apron west of taxiway E (flying club): taxilane G, stands 91-96 either side, parked facing out.
+    const ga = ['G@-1380', 'G@-1470', 'G@-1560', 'G@-1650'].map((n) => node(n, +n.slice(2), 0));
+    edge('E@0', ga[0], 'G', 'lane');
+    for (let i = 1; i < ga.length; i++) edge(ga[i - 1], ga[i], 'G', 'lane');
+    [[-1380, 75], [-1380, -75], [-1470, 75], [-1470, -75], [-1560, 75], [-1560, -75]].forEach(([u, v], i) => {
+      const num = 91 + i, lane = `G@${u}`;
+      const st = node(`ST${num}`, u, v, 'stand');
+      edge(lane, st, `stand ${num}`, 'stand');
+      stands[num] = { num, node: st, lane, u, v, bridge: 0, ga: true };
+    });
+    signs.push({ text: 'G', u: -1430, v: 16 });
     return { TWY_W: 23 };
   },
 
@@ -318,7 +343,6 @@ AIRPORTS.EGRV = {
       // Service roads around the aprons (white dashed)
       for (const sg of [1, -1]) line([P(-1150, sg * 432), P(1150, sg * 432)], 'rgba(230,235,238,0.55)', 1.2, [8, 6]);
       line([P(-1270, -470), P(-1270, 470)], 'rgba(230,235,238,0.4)', 1.2, [8, 6]);
-      line([P(-1250, 0), P(-1300, 0)], C.twy, 23); // stub to the cargo apron
     },
     buildings({ rect, C, ctx }) {
       // Terminal with roof detail, tower, fire station, hangars
@@ -328,12 +352,12 @@ AIRPORTS.EGRV = {
       ctx.fillStyle = '#4b5d6e'; ctx.beginPath(); ctx.arc(-1105, 0, 13, 0, Math.PI * 2); ctx.fill(); // tower
       rect(1120, -35, 1190, 35, '#4b5560'); // fire station
       rect(1185, -20, 1240, 20, '#3f4950');
-      rect(-1650, 25, -1540, 105, '#46525c'); rect(-1650, -105, -1540, -25, '#46525c'); // hangars
+      rect(-1700, 22, -1640, 125, '#46525c'); rect(-1700, -125, -1640, -22, '#46525c'); // flying club hangars
     },
     labels({ name, big }) {
       name('TERMINAL', 0, 0);
       if (!big) return;
-      name('TWR', -1105, -30, '#9fb3c3'); name('RFFS', 1155, -55, '#9fb3c3'); name('CARGO / GA', -1495, 0, '#9fb3c3');
+      name('TWR', -1105, -30, '#9fb3c3'); name('RFFS', 1155, -55, '#9fb3c3'); name('GA / FLYING CLUB', -1495, -125, '#9fb3c3');
       name('P', -1107, -83, '#9fb3c3'); name('P', -1107, 83, '#9fb3c3');
     },
   },

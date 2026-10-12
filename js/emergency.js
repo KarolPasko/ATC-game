@@ -42,7 +42,7 @@ class EmergencyManager {
   trigger(type = null, ac = null) {
     const g = this.game;
     const candidates = (t) => g.aircraft.filter((a) => {
-      if (a.emg || a.state !== 'air' || a.handedOff) return false;
+      if (a.emg || a.state !== 'air' || a.handedOff || a.vfr) return false;
       const d = Math.hypot(a.x, a.y);
       const ph = EMERGENCIES[t].phase;
       if (ph === 'dep') return !a.isArr && a.alt > 1200 && a.alt < 7000 && d < 15;

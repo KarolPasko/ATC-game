@@ -308,7 +308,12 @@ Object.assign(Aircraft.prototype, {
     const from = this.taxiStartNode();
     const r = GROUND.route(from, target, via);
     if (!r) return null;
-    if (this.state === 'stand') {
+    if (this.state === 'stand' && GROUND.stands[this.stand]?.ga) {
+      // Light aircraft on the GA ramp taxi straight out (parked facing the taxilane).
+      this.state = 'taxi';
+      this.taxiPath = [from, ...r.path];
+      this.gnode = GROUND.stands[this.stand].node;
+    } else if (this.state === 'stand') {
       this.beginPushback(this.faceFromPath(from, r.path), [from, ...r.path]);
     } else if (this.state === 'pushback') {
       this.push.next = [from, ...r.path];
@@ -538,16 +543,19 @@ Object.assign(Aircraft.prototype, {
   },
 
   // Landing roll: pick the first exit we can make, then turn off there.
-  chooseExit() {
+  chooseExit(game) {
     const r = this.runway;
     const dirSign = r.dirU; // +1 when landing towards +u
     const here = { u: (this.x * GROUND.M_PER_NM) * GROUND.U.x + (this.y * GROUND.M_PER_NM) * GROUND.U.y };
     const ktToMs = 0.5144;
     const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 1.8;
     const need = (v * v - vExit * vExit) / (2 * a);
+    // Not into a connector where another aircraft is waiting (e.g. a departure at an intersection holding point).
+    const blocked = (e) => game?.aircraft?.some((o) => o !== this && ['ground', 'taxi', 'lineup'].includes(o.state) &&
+      Math.min(Geo.dist(o, GROUND.nodes[e.exitNode]), Geo.dist(o, GROUND.nodes[e.rwyNode])) * GROUND.M_PER_NM < 140);
     const options = GROUND.exits[this.rwy]
       .map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign }))
-      .filter((e) => e.ahead >= need * 0.9)
+      .filter((e) => e.ahead >= need * 0.9 && !blocked(e))
       .sort((p, q) => p.ahead - q.ahead);
     const end = GROUND.exits[this.rwy].map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign })).sort((p, q) => q.ahead - p.ahead)[0];
     this.exit = options[0] || end;
@@ -563,7 +571,7 @@ Object.assign(Aircraft.prototype, {
       } else if (this.emg.stoppedAt !== undefined && game.time - this.emg.stoppedAt > 300) game.emergency?.towed(this);
       return;
     }
-    if (!this.exit) this.chooseExit();
+    if (!this.exit) this.chooseExit(game);
     const n = GROUND.nodes[this.exit.rwyNode];
     const dirSign = this.runway.dirU;
     const ahead = ((n.x - this.x) * GROUND.U.x + (n.y - this.y) * GROUND.U.y) * GROUND.M_PER_NM * dirSign;
@@ -1091,7 +1099,7 @@ class GroundView {
     }
     const airborne = ac.state === 'air' || ac.state === 'takeoff';
     // Silhouette scaled to wingspan
-    const span = (ac.wake === 'H' ? 64 : ac.type === 'DH8D' ? 28 : 35) * this.view.scale;
+    const span = (ac.wake === 'H' ? 64 : ac.wake === 'L' ? 11 : ac.type === 'DH8D' ? 28 : 35) * this.view.scale;
     const k = Math.max(span, 10) / 2;
     ctx.save();
     ctx.translate(p.x, p.y);
@@ -1112,6 +1120,7 @@ class GroundView {
       case 'ground': status = `HP ${ac.gnode} RDY`; break;
       case 'lineup': status = `LINED UP ${ac.rwy}`; break;
       case 'takeoff': status = 'T/O ROLL'; break;
+      case 'touchgo': status = 'TOUCH & GO'; break;
       case 'landed': status = 'ROLLOUT'; break;
       case 'parked': status = `ON STAND ${ac.stand}`; break;
       default: status = `${ac.altText()} ${ac.isArr ? 'ARR ' + ac.rwy : 'DEP'}`;

@@ -206,8 +206,14 @@ const TYPES = {
   B789: { wake: 'H', vapp: 147, vr: 160, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
   B77W: { wake: 'H', vapp: 150, vr: 165, max: 340, climb: 2000, desc: 2000, turn: 2.5 },
   B744: { wake: 'H', vapp: 155, vr: 165, max: 340, climb: 1800, desc: 2000, turn: 2.5 },
+  // Light aircraft (wake category L): cct = circuit speed, accel = kt/s on the take-off roll.
+  C152: { wake: 'L', vapp: 60, vr: 50, max: 105, climb: 600, desc: 600, turn: 3, cct: 80, accel: 2, prop: true, ga: true },
+  C172: { wake: 'L', vapp: 65, vr: 55, max: 125, climb: 700, desc: 700, turn: 3, cct: 90, accel: 2.2, prop: true, ga: true },
+  PA28: { wake: 'L', vapp: 70, vr: 60, max: 125, climb: 650, desc: 700, turn: 3, cct: 90, accel: 2.2, prop: true, ga: true },
+  DA40: { wake: 'L', vapp: 70, vr: 59, max: 140, climb: 750, desc: 700, turn: 3, cct: 95, accel: 2.4, prop: true, ga: true },
+  SR22: { wake: 'L', vapp: 80, vr: 70, max: 180, climb: 1000, desc: 800, turn: 3, cct: 105, accel: 3, prop: true, ga: true },
 };
-const TYPE_WEIGHTS = Object.keys(TYPES);
+const TYPE_WEIGHTS = Object.keys(TYPES).filter((t) => !TYPES[t].ga);
 
 // Some SIDs are for jets only or propeller aircraft only (e.g. SANBA and LISTO off Manchester's 23s).
 function sidAllowed(sid, type) {

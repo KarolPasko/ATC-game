@@ -101,7 +101,7 @@ kbd { border: 1px solid var(--line); padding: 0 4px; border-radius: 3px; }
 #strips h3 { font-size: 11px; color: var(--dim); margin: 10px 0 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 #strips h3 em { font-style: normal; color: var(--text); margin-left: 4px; }
 .sw { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 1px; }
-.sw.arr { background: var(--arr); } .sw.dep { background: var(--dep); } .sw.gnd { background: var(--gnd); }
+.sw.arr { background: var(--arr); } .sw.dep { background: var(--dep); } .sw.gnd { background: var(--gnd); } .sw.vfr { background: #f2c14e; }
 .none { color: #4f606d; margin: 2px 0 6px; }
 .strip { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; background: var(--panel-2); border-left: 4px solid; padding: 4px 8px; margin-bottom: 3px; cursor: pointer; border-radius: 2px; }
 .strip.arr { border-color: var(--arr); } .strip.dep { border-color: var(--dep); }

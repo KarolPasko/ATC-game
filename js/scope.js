@@ -129,7 +129,9 @@ Object.assign(Radar.prototype, {
     const alt = String(Math.round(ac.alt / 100)).padStart(3, '0');
     const cfl = ac.gs ? 'GS ' : ac.est ? 'LOC' : String(Math.round(ac.tgtAlt / 100)).padStart(3, '0');
     let nav;
-    if (ac.state === 'landed') nav = 'LDG';
+    if (ac.circuit) nav = ac.circuitLeg();
+    else if (ac.state === 'touchgo') nav = 'T&G';
+    else if (ac.state === 'landed') nav = 'LDG';
     else if (ac.est) nav = `I${ac.rwy}`;
     else if (ac.mode === 'hold') nav = `H${ac.hold.fix}`;
     else if (ac.mode === 'heading') nav = `H${Geo.fmtHdg(ac.tgtHdg)}`;
@@ -241,7 +243,14 @@ Object.assign(Radar.prototype, {
     // Callsign: clicking it assumes an incoming handoff (as in EuroScope), then shows the aircraft menu.
     if (ac.incoming !== null && ac.incoming !== undefined) g.commands.execute(`${cs} asm`);
     const items = [];
-    if (ac.airborne) {
+    if (ac.airborne && ac.circuit) {
+      const c = ac.circuit;
+      if (!c.clr) items.push([c.left > 0 ? 'Cleared touch and go' : 'Cleared to land', `${cs} cl`]);
+      if (c.left > 0) items.push(['Make this a full stop', `${cs} fs`]);
+      if (!c.extend && ['upwind', 'crosswind', 'downwind'].includes(c.phase)) items.push(['Extend downwind', `${cs} ext`]);
+      if (c.extend || c.phase === 'downwind') items.push(['Turn base now', `${cs} base`]);
+      items.push(['Orbit left', `${cs} orbit l`], ['Orbit right', `${cs} orbit r`]);
+    } else if (ac.airborne) {
       const next = ac.owner === 'APP' ? (ac.isArr ? 'TWR' : 'CTR') : ac.owner === 'TWR' && !ac.isArr ? 'APP' : null;
       if (next && g.position !== 'ALL') items.push([`Transfer to ${POSITIONS[next].short}`, `${cs} ho`]);
       if (g.position === 'ALL' && !ac.isArr && !ac.handedOff) items.push(['Transfer to Control', `${cs} ho`]);

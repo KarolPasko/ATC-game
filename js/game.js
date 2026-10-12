@@ -40,6 +40,8 @@ class Game {
     this.emergency.reset();
     this.nextArr = 5;
     this.nextDep = 15;
+    this.nextGA = 60 + Math.random() * 240;
+    this.lastLanding = {}; // physical runway -> { t, wake } of the last medium / heavy landing (wake for light aircraft)
     this.atis = 'K';
     AIRPORT.qnh = 1003 + Math.floor(Math.random() * 25);
     const temp = 8 + Math.floor(Math.random() * 13);
@@ -110,6 +112,10 @@ class Game {
       // A single arrival runway takes fewer arrivals than a pair of parallels.
       const mean = t.arr * (this.arrivalRunways().length > 1 ? 1 : 1.7);
       this.nextArr = this.time + (Math.random() < 0.1 ? 40 + Math.random() * 30 : this.randomGap(mean));
+    }
+    if (this.time >= this.nextGA) {
+      this.spawnGA();
+      this.nextGA = this.time + this.randomGap(900);
     }
     if (this.time >= this.nextDep) {
       this.spawnDeparture();
@@ -213,6 +219,61 @@ class Game {
     return free.length ? rnd(free) : null;
   }
 
+  // ---------- general aviation ----------
+  // A light aircraft on the GA ramp wanting circuits. Few at a time (the airport's cap for the traffic level), and only
+  // when a GA stand is free.
+  spawnGA() {
+    const ga = AIRPORT.ga;
+    if (!ga) return null;
+    const cap = ga.cap?.[this.traffic] ?? 1;
+    if (this.aircraft.filter((a) => a.vfr && a.state !== 'gone').length >= cap) return null;
+    const rwy = ga.runway[this.config];
+    const stand = rwy && this.freeStand(true);
+    if (!stand) return null;
+    const pool = Object.entries(GA_FLEET).flatMap(([t, w]) => Array(w).fill(t));
+    const type = rnd(pool);
+    let cs;
+    do cs = `G-${rnd(['B', 'C', 'D', 'E', 'O', 'S', 'U', 'Z'])}${Array.from({ length: 3 }, () => String.fromCharCode(65 + Math.floor(Math.random() * 26))).join('')}`;
+    while (this.aircraft.some((a) => a.cs === cs));
+    const st = GROUND.stands[stand], n = GROUND.nodes[st.node];
+    const circuits = 2 + Math.floor(Math.random() * 4);
+    const ac = new Aircraft({
+      cs, type, kind: 'dep', vfr: true, circuits,
+      x: n.x, y: n.y, alt: 0, tgtAlt: 0, spd: 0,
+      state: 'stand', stand, gnode: st.node, rwy, sid: 'VFR', route: [],
+      orig: AIRPORT.icao, dest: AIRPORT.icao, squawk: '7010', cleared: false, spawnTime: this.time, owner: 'GND',
+    });
+    ac.hdg = ac.tgtHdg = Geo.bearing(n, GROUND.nodes[st.lane]); // parked facing out, ready to taxi
+    this.aircraft.push(ac);
+    ac.say(this, `${AIRPORT.city} Ground, ${cs}, ${GA_NAMES[type]} on the GA ramp, stand ${stand}, information ${this.atis}, request taxi for ${circuits} circuits`);
+    return ac;
+  }
+
+  // Circuit radio calls ("downwind, touch and go" / "final, full stop").
+  circuitCall(ac, leg) {
+    const c = ac.circuit;
+    if (!c) return;
+    if (leg === 'downwind') this.pilotSay(ac, `downwind, ${ac.circuitIntent()}`);
+    else if (leg === 'final' && !c.clr) this.pilotSay(ac, `final, ${ac.circuitIntent()}`);
+  }
+
+  onTouchAndGo(ac) {
+    this.checkLightWake(ac);
+    this.log(`${ac.cs} touch and go runway ${ac.rwy}`, 'sys');
+    if (this.userOwns(ac) && this.position !== 'ALL') this.addScore(10, `${ac.cs} circuit flown`);
+  }
+
+  // Light aircraft landing too soon behind a medium or heavy: 2 minutes behind a medium, 3 behind a heavy.
+  checkLightWake(ac) {
+    const last = this.lastLanding[ac.runway.phys];
+    if (!last) return;
+    const need = last.wake === 'H' ? 180 : 120, gap = this.time - last.t;
+    if (gap < need && this.userOwns(ac)) {
+      this.stats.losses++;
+      this.addScore(-30, `Wake turbulence: ${ac.cs} touched down ${Math.round(gap)} s behind ${last.type} ${last.cs} (need ${need / 60} min)`);
+    }
+  }
+
   // Another ground aircraft close ahead that this one must stop behind (in-trail, or at a holding point).
   groundBlocker(ac) {
     const v = Geo.vec(ac.hdg);
@@ -241,8 +302,14 @@ class Game {
   }
 
   onLanded(ac) {
-    ac.stand = this.freeStand();
+    ac.stand = this.freeStand(!!ac.vfr);
     this.stats.landed++;
+    if (ac.vfr) {
+      this.checkLightWake(ac);
+      if (this.userOwns(ac)) this.addScore(30, `${ac.cs} circuits complete, full stop runway ${ac.rwy}`);
+      return;
+    }
+    if (ac.wake !== 'L') this.lastLanding[ac.runway.phys] = { t: this.time, wake: ac.wake, cs: ac.cs, type: ac.type };
     this.addScore(100, `${ac.cs} landed runway ${ac.rwy}`);
   }
 
@@ -251,6 +318,7 @@ class Game {
       this.stats.goArounds++;
       this.addScore(-10, `${ac.cs} go-around`);
     }
+    if (ac.vfr) return; // circuit traffic stays with Tower
     // Tower hands a missed approach straight back to Approach for re-sequencing.
     if (ac.owner === 'TWR') {
       ac.owner = 'APP';
@@ -310,8 +378,9 @@ class Game {
   // At the runway holding point Ground hands the departure to Tower automatically.
   onReachedHoldingPoint(ac) {
     ac.waitSince = this.time;
+    const ready = `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure${ac.vfr ? ', for circuits' : ''}`;
     if (ac.owner !== 'GND') {
-      this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
+      this.pilotSay(ac, ready);
       return;
     }
     if (this.userOwns(ac) && this.position !== 'ALL') {
@@ -320,7 +389,7 @@ class Game {
     }
     if (this.position !== 'ALL') this.log(`${AIRPORT.city} Ground: ${ac.cs}, holding point ${ac.gnode}, contact Tower ${POSITIONS.TWR.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
     this.transfer(ac, 'TWR', { ai: true, silent: this.position === 'ALL' });
-    if (this.position === 'ALL') this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
+    if (this.position === 'ALL') this.pilotSay(ac, ready);
   }
 
   // A departure stopped at a holding point before a runway it has to cross: Ground hands it to Tower, who owns
@@ -348,8 +417,8 @@ class Game {
   crossingTraffic(ac, n, finalNm = 0) {
     const before = (o, u) => (n.u - u) * o.runway.dirU > -80;
     return this.aircraft.find((o) => o !== ac && o.runway?.phys === n.phys && (
-      o.state === 'takeoff' || (o.state === 'lineup' && (o.lining || o.ctoPending)) || (!o.isArr && o.airborne && o.alt < 300) ||
-      (o.est && finalNm > 0 && o.finalGeometry().along < finalNm) ||
+      o.state === 'takeoff' || o.state === 'touchgo' || (o.state === 'lineup' && (o.lining || o.ctoPending)) || (!o.isArr && o.airborne && o.alt < 300) ||
+      ((o.est || ['base', 'final'].includes(o.circuit?.phase)) && finalNm > 0 && o.finalGeometry().along < finalNm) ||
       (o.state === 'landed' && before(o, toLocal(o).u) && (!o.exit || !before(o, o.exit.u + o.runway.dirU * 100))) ||
       (o.state === 'taxi' && o.vacating && Geo.dist(o, n) * GROUND.M_PER_NM < 150))) || null;
   }
@@ -429,7 +498,7 @@ class Game {
   runwayOccupant(ac) {
     const phys = ac.runway.phys;
     return this.aircraft.find((o) => o !== ac && ((o.crossing === phys) || (o.runway?.phys === phys &&
-      (['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) || (o.airborne && !o.isArr && o.alt < 300)))));
+      (['lineup', 'takeoff', 'landed', 'touchgo'].includes(o.state) || (o.state === 'taxi' && o.vacating) || (o.airborne && !o.isArr && o.alt < 300)))));
   }
 
   // An arrival reaching the threshold with the runway still occupied must go around.
@@ -446,8 +515,8 @@ class Game {
 
   checkRunwayClear(ac) {
     const busy = this.aircraft.find((o) => o !== ac && (o.crossing === ac.runway.phys || (o.runway?.phys === ac.runway.phys && (
-      ['lineup', 'takeoff', 'landed'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
-      (o.est && o.finalGeometry().along < 2.5) ||
+      ['lineup', 'takeoff', 'landed', 'touchgo'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
+      (o.est && o.finalGeometry().along < 2.5) || (o.circuit?.phase === 'final' && o.finalGeometry().along < 1) ||
       (o.state === 'air' && !o.isArr && o.alt < 300)))));
     if (busy) this.addScore(-50, `Runway ${ac.rwy} not clear — ${busy.cs} is on the runway / short final`);
   }
@@ -471,6 +540,7 @@ class Game {
     for (let i = 0; i < air.length; i++) {
       for (let j = i + 1; j < air.length; j++) {
         const a = air[i], b = air[j];
+        if (a.vfr || b.vfr) { this.checkAirprox(a, b, now); continue; }
         if (this.exempt(a, b)) continue;
         const h = Geo.dist(a, b), v = Math.abs(a.alt - b.alt);
         if (h < 3 && v < 950) {
@@ -489,6 +559,23 @@ class Game {
     }
     this.checkWake(air, now);
     this.conflictPairs = now;
+  }
+
+  // VFR circuit traffic is not separated like IFR traffic (class D: traffic information), but an airprox counts.
+  checkAirprox(a, b, now) {
+    // Aircraft lined up on finals to different (parallel) runways are not in conflict.
+    const onFinal = (x) => x.est || ['base', 'final'].includes(x.circuit?.phase);
+    if (onFinal(a) && onFinal(b) && a.rwy !== b.rwy) return;
+    const h = Geo.dist(a, b), v = Math.abs(a.alt - b.alt);
+    if (h < 1 && v < 600) { a.conflict = Math.max(a.conflict, 1); b.conflict = Math.max(b.conflict, 1); }
+    if (h >= 0.3 || v >= 300) return;
+    a.conflict = b.conflict = 2;
+    const key = `airprox|${[a.cs, b.cs].sort().join('|')}`;
+    now.add(key);
+    if (!this.conflictPairs.has(key) && this.blame(a, b)) {
+      this.stats.losses++;
+      this.addScore(-50, `Airprox: ${a.cs} / ${b.cs} (${(h * 1852).toFixed(0)} m, ${Math.round(v)} ft)`);
+    }
   }
 
   // Wake turbulence spacing on final: 4 nm behind a heavy for a heavy, 5 nm for a medium.
@@ -525,7 +612,9 @@ class Game {
   }
 
   exempt(a, b) {
-    if (a.est && b.est && a.rwy !== b.rwy) return true; // independent parallel approaches
+    // Independent parallel approaches: established, or on the published arc / IF onto the final.
+    const joining = (x) => x.est || (x.app && x.mode === 'route' && (x.route[0] === APPROACHES[x.rwy]?.if || x.route[0] === APPROACHES[x.rwy]?.faf));
+    if (joining(a) && joining(b) && a.rwy !== b.rwy) return true;
     // Departures from the parallel runways on tracks diverging by 15° or more.
     if (!a.isArr && !b.isArr && a.rwy !== b.rwy && a.alt < 6000 && b.alt < 6000 &&
         Math.hypot(a.x, a.y) < 10 && Math.abs(Geo.diff(a.track(), b.track())) >= 15) return true;
@@ -556,10 +645,11 @@ class Game {
   findAircraft(tok) {
     if (!tok) return null;
     tok = tok.toUpperCase();
-    const exact = this.aircraft.find((a) => a.cs === tok);
+    const bare = (cs) => cs.replace(/-/g, ''); // G-BXYZ also answers to GBXYZ
+    const exact = this.aircraft.find((a) => a.cs === tok || bare(a.cs) === tok);
     if (exact) return exact;
     if (tok.length < 2) return null;
-    const m = this.aircraft.filter((a) => a.cs.endsWith(tok) || a.cs.startsWith(tok));
+    const m = this.aircraft.filter((a) => a.cs.endsWith(tok) || a.cs.startsWith(tok) || bare(a.cs).startsWith(tok));
     return m.length === 1 ? m[0] : null;
   }
 
@@ -611,13 +701,20 @@ class Game {
     // those taxiing or at a holding point are re-routed to the new holding point.
     for (const a of this.aircraft) {
       if (a.isArr || !['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(a.state)) continue;
-      // Same SID in the new direction if there is one, else the one ending nearest the old exit.
-      const exit = a.route[a.route.length - 1];
-      const ok = PROCS[c].sids.filter((s) => sidAllowed(s, a.type));
-      const end = (s) => FIXES[s.fixes[s.fixes.length - 1]];
-      const sid = ok.find((s) => end(s).name === exit) || ok.slice().sort((p, q) => Geo.dist(end(p), FIXES[exit]) - Geo.dist(end(q), FIXES[exit]))[0];
-      if (!sid) continue;
-      Object.assign(a, { rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice() });
+      if (a.vfr) {
+        // Circuit traffic moves to the new circuit runway.
+        const rwy = AIRPORT.ga?.runway[c];
+        if (!rwy) continue;
+        a.rwy = rwy;
+      } else {
+        // Same SID in the new direction if there is one, else the one ending nearest the old exit.
+        const exit = a.route[a.route.length - 1];
+        const ok = PROCS[c].sids.filter((s) => sidAllowed(s, a.type));
+        const end = (s) => FIXES[s.fixes[s.fixes.length - 1]];
+        const sid = ok.find((s) => end(s).name === exit) || ok.slice().sort((p, q) => Geo.dist(end(p), FIXES[exit]) - Geo.dist(end(q), FIXES[exit]))[0];
+        if (!sid) continue;
+        Object.assign(a, { rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice() });
+      }
       if (a.state === 'ground' || a.state === 'lineup') {
         if (a.state === 'lineup') a.gnode = a.hpNode;
         a.state = 'taxi'; a.taxiPath = []; a.lining = false; a.ctoPending = false; a.gp = null; a.gnode = a.gnode || GROUND.nearestNode(a);

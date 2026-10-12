@@ -30,6 +30,7 @@ class AIController {
     for (const ac of g.aircraft) {
       if (ac.state === 'gone' || ac.owner === 'CTR') continue;
       if (pos === 'ALL') this.combinedTransfers(ac);
+      if (pos === 'ALL' && ac.circuit && ac.airborne) this.circuitControl(ac);
       if (g.autoTaxi && ac.owner === 'GND' && g.userOwns(ac)) this.groundMovement(ac);
       if (ai('GND') && ac.owner === 'GND') this.ground(ac);
       if (ai('TWR') && ac.owner === 'TWR') this.tower(ac);
@@ -73,7 +74,8 @@ class AIController {
   tower(ac) {
     const g = this.game;
     if (ac.state === 'taxi') { if (ac.holdShort && this.canCross(ac)) this.crossGroup(ac); return; } // arrivals vacating: to Ground once clear
-    const go = () => { this.cmd(ac, 'cto'); this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' }; };
+    if (ac.circuit && ac.airborne) return this.circuitControl(ac);
+    const go = () => { this.cmd(ac, 'cto'); this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H', wake: ac.wake }; };
     if (ac.state === 'ground' && ac.cleared) {
       if (this.canTakeoff(ac) && this.canLineUp(ac)) go();
       else if (this.canLineUp(ac)) this.cmd(ac, 'lu'); // line up and wait behind the landing traffic
@@ -90,8 +92,10 @@ class AIController {
   nextArrival(ac, phys = ac.runway.phys) {
     let best = Infinity;
     for (const o of this.game.aircraft) {
-      if (!o.isArr || !o.airborne || !o.ils || o.runway.phys !== phys) continue;
-      const d = o.est ? o.finalGeometry().along : this.remaining(o);
+      if (!o.airborne || o.runway?.phys !== phys) continue;
+      let d;
+      if (o.circuit) { if (!['base', 'final'].includes(o.circuit.phase)) continue; d = o.finalGeometry().along; } // circuit traffic turning in
+      else { if (!o.isArr || !o.ils) continue; d = o.est ? o.finalGeometry().along : this.remaining(o); }
       if (d > -0.5 && d < best) best = d;
     }
     return best;
@@ -107,7 +111,7 @@ class AIController {
     }
     if (this.nextArrival(ac) < 5) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
-      o.state === 'lineup' || o.state === 'takeoff' || (!o.isArr && o.airborne && o.alt < 300) ||
+      o.state === 'lineup' || o.state === 'takeoff' || o.state === 'touchgo' || (!o.isArr && o.airborne && o.alt < 300) ||
       (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)))));
   }
 
@@ -115,11 +119,13 @@ class AIController {
   // since the previous departure (2 minutes behind a heavy, for wake turbulence).
   canTakeoff(ac) {
     const g = this.game, phys = ac.runway.phys;
+    // 1 minute between departures; 2 behind a heavy, and 2 for a light aircraft behind anything bigger.
     const last = this.lastTakeoff[phys];
-    if (last && g.time - last.t < (last.heavy ? 120 : 60)) return false;
+    const wait = last && (last.heavy || (ac.wake === 'L' && last.wake && last.wake !== 'L') ? 120 : 60);
+    if (last && g.time - last.t < wait) return false;
     if (this.nextArrival(ac) < 3) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
-      o.state === 'takeoff' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
+      o.state === 'takeoff' || o.state === 'touchgo' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
       (!o.isArr && o.airborne && o.alt < 1000)))));
   }
 
@@ -152,6 +158,40 @@ class AIController {
     const near = (o) => beyond.some((b) => Geo.dist(o, b) * GROUND.M_PER_NM < 90);
     if (g.aircraft.some((o) => o !== ac && o.onGround() && o.state !== 'landed' && near(o))) return false;
     return !g.crossingTraffic(ac, n);
+  }
+
+  // ---------- circuit traffic ----------
+  // Tower's handling of a light aircraft in the circuit: extend its downwind until there is room to turn in (no IFR
+  // arrival within 7 nm, nothing else turning in ahead, wake time behind the last medium / heavy landing), then let it
+  // turn base, and clear it for the touch-and-go or landing once the runway will be free.
+  circuitControl(ac) {
+    const g = this.game, c = ac.circuit, phys = ac.runway.phys;
+    if (c.phase === 'downwind' && !c.orbit) {
+      const room = this.circuitRoom(ac);
+      const along = ac.finalGeometry().along;
+      if (!room && !c.extend && along > -1) this.cmd(ac, 'ext');
+      else if (room && c.extend) this.cmd(ac, 'base');
+    }
+    if ((c.phase === 'base' || c.phase === 'final') && !c.clr && ac.finalGeometry().along < 2.5) {
+      const busy = g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
+        ['lineup', 'takeoff', 'touchgo'].includes(o.state) || (o.state === 'landed' && o.spd > 30) || (!o.isArr && o.airborne && o.alt < 300 && !o.circuit)));
+      if (!busy) this.cmd(ac, 'cl');
+    }
+  }
+
+  circuitRoom(ac) {
+    const g = this.game, phys = ac.runway.phys;
+    for (const o of g.aircraft) {
+      if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
+      if (o.isArr && o.ils && !o.circuit && (o.est ? o.finalGeometry().along : this.remaining(o)) < 9) return false;
+      if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
+    }
+    if (g.aircraft.some((o) => o !== ac && o.state === 'touchgo' && o.runway?.phys === phys)) return false;
+    // Let a departure that has been waiting a while go first.
+    if (g.aircraft.some((o) => !o.vfr && o.state === 'ground' && o.cleared && o.runway?.phys === phys && g.time - (o.waitSince ?? g.time) > 45)) return false;
+    const last = g.lastLanding[phys];
+    if (last && g.time - last.t < (last.wake === 'H' ? 180 : 120) - 80) return false; // ~80 s from base to touchdown
+    return true;
   }
 
   // Kept for callers that only want to know whether a departure could go now.

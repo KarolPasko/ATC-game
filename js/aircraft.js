@@ -3,7 +3,7 @@ const GS_FT_PER_NM = Math.tan(Geo.rad(3)) * 6076.12; // ~318 ft/nm
 const MAX_BANK = 25; // deg
 
 // Used when simulating a "ghost" copy of an aircraft for path prediction.
-const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {}, groundBlocker() { return null; }, onVacated() {}, onParked() {}, onReachedHoldingPoint() {} };
+const SILENT_GAME = { log() {}, pilotSay() {}, onLanded() {}, onGoAround() {}, groundBlocker() { return null; }, onVacated() {}, onParked() {}, onReachedHoldingPoint() {}, circuitCall() {}, onTouchAndGo() {} };
 
 class Aircraft {
   constructor(o) {
@@ -100,12 +100,16 @@ class Aircraft {
         this.groundUpdate(dt, game);
         return;
       case 'takeoff':
-        this.spd += 4 * dt;
+        this.spd += (this.perf.accel || 4) * dt;
         this.move(dt);
         if (this.spd >= this.perf.vr) {
           this.state = 'air';
           this.tgtHdg = this.hdg;
+          if (this.vfr && !this.circuit) this.startCircuit();
         }
+        return;
+      case 'touchgo':
+        this.touchGoStep(dt, game);
         return;
       case 'landed':
         this.rollOut(dt, game);
@@ -128,6 +132,7 @@ class Aircraft {
   }
 
   navigate(dt, game) {
+    if (this.circuit) return this.flyCircuit(dt, game);
     // Departures fly runway heading until 800 ft before turning on course.
     if (!this.isArr && this.alt < 800) { this.tgtHdg = this.runway.heading; return; }
 
@@ -457,6 +462,7 @@ class Aircraft {
     const g = Object.assign(Object.create(Aircraft.prototype), this, {
       route: this.route.slice(),
       hold: this.hold ? { ...this.hold, announced: true } : null,
+      circuit: this.circuit ? { ...this.circuit, called: { downwind: true, final: true }, orbit: this.circuit.orbit && { ...this.circuit.orbit } } : null,
       trail: [], endOfRouteWarned: true, calledDeparture: true, landClr: true,
     });
     if (!g.isArr && ['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(g.state)) {
@@ -468,12 +474,14 @@ class Aircraft {
     const dt = 2;
     const pts = [{ x: g.x, y: g.y }];
     const startLaps = g.hold ? g.hold.laps : 0;
+    const startCct = g.circuit ? g.circuit.laps : 0;
     let t = 0, straight = 0;
     while (t < limit && g.state !== 'gone') {
       g.update(dt, SILENT_GAME);
       t += dt;
       pts.push({ x: g.x, y: g.y });
       if (g.state === 'landed') break;
+      if (g.circuit && (g.circuit.laps > startCct || g.state === 'touchgo')) break; // one circuit is enough
       if (g.mode === 'hold' && ((g.hold.laps > startLaps && t >= 200) || g.hold.laps > startLaps + 1)) break; // one full racetrack is enough
       // Once a non-vectored aircraft runs out of route and is just flying straight, stop after a short stub.
       if (!vectored && g.state === 'air' && g.mode === 'heading' && !g.ils && Math.abs(Geo.diff(g.hdg, g.tgtHdg)) < 1) {

@@ -24,7 +24,10 @@ const COMMAND_HELP = [
   ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
   ['GA', 'Go around'],
-  ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm'],
+  ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm; for circuit traffic: cleared touch and go (or to land on the last circuit)'],
+  ['FS', 'Circuit traffic: make this one a full stop'],
+  ['EXT / BASE', 'Circuit traffic: extend downwind (it orbits if extended far) / turn base now'],
+  ['ORBIT [L|R]', 'Circuit traffic: one orbit, then carry on'],
   ['ASM', 'Assume an aircraft handed to you (its tag flashes until you do)'],
   ['ACK', 'Acknowledge a MAYDAY / PAN call (alerts the emergency services)'],
   ['HO', 'Transfer: Ground→Tower (departures), Tower→Ground (vacated arrivals), Tower→Departure, Approach→Tower, Departure→Control'],
@@ -50,7 +53,8 @@ const CMD_ALIASES = {
   S: 'S', SPD: 'S',
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
-  CL: 'CL', CTL: 'CL', CLAND: 'CL', ASM: 'ASM', ASSUME: 'ASM', ACK: 'ACK', ROGER: 'ACK',
+  CL: 'CL', CTL: 'CL', CLAND: 'CL', TNG: 'CL', CTG: 'CL', FS: 'FS', FULL: 'FS', EXT: 'EXT', EXTEND: 'EXT', BASE: 'BASE', TB: 'BASE',
+  ORBIT: 'ORBIT', ORB: 'ORBIT', ASM: 'ASM', ASSUME: 'ASM', ACK: 'ACK', ROGER: 'ACK',
   PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT', CROSS: 'CROSS', CX: 'CROSS', CRX: 'CROSS',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
@@ -208,6 +212,11 @@ class CommandProcessor {
       case 'CAF': {
         if (ac.isArr) return 'we are already IFR, inbound';
         if (ac.cleared) return 'already have our clearance';
+        if (ac.vfr) {
+          ac.cleared = true;
+          ac.squawk = '7010';
+          return `cleared for circuits runway ${ac.rwy}, circuit height ${(AIRPORT.elevation || 0) + CIRCUIT.height} ft, squawk 7010`;
+        }
         ac.cleared = true;
         ac.tgtAlt = AIRPORT.sidTop;
         g.log(`${ac.cs} cleared to ${ac.dest} via ${ac.sid} departure, runway ${ac.rwy}, climb ${AIRPORT.sidTop}, squawk ${ac.squawk}`, 'sys');
@@ -265,6 +274,7 @@ class CommandProcessor {
         return null;
       case 'HO': {
         if (ac.handedOff) return 'already with next sector';
+        if (ac.circuit && ac.airborne) return 'unable, remaining in the circuit with you';
         let next = null;
         if (ac.owner === 'GND') next = !ac.isArr && ac.onGround() ? 'TWR' : null;
         else if (ac.owner === 'TWR') next = ac.isArr ? (ac.state === 'taxi' || ac.state === 'parked' ? 'GND' : null) : ac.airborne ? 'APP' : null;
@@ -283,6 +293,7 @@ class CommandProcessor {
       }
       case 'PB': {
         if (ac.state !== 'stand') return 'unable, we are not on stand';
+        if (GROUND.stands[ac.stand]?.ga) return 'no pushback needed, we can taxi out — request taxi';
         if (!ac.isArr && !ac.cleared) return 'unable, we need our clearance first';
         const face = this.optional(cur, (t) => ({ E: 'E', EAST: 'E', NE: 'E', W: 'W', WEST: 'W', SW: 'W' })[t] || null);
         const f = ac.pushback(face);
@@ -356,12 +367,37 @@ class CommandProcessor {
         g.log(`${ac.cs} assumed`, 'sys');
         return null;
       case 'CL': {
+        if (ac.circuit && ac.airborne) {
+          if (ac.circuit.clr) return 'already cleared';
+          if (!this.opts.ai) g.warnRunwayOccupied(ac);
+          ac.circuit.clr = true;
+          return `${ac.circuit.left > 0 ? 'cleared touch and go' : 'cleared to land'} runway ${ac.rwy}, wind ${g.windText()}`;
+        }
         if (!ac.isArr || !ac.airborne) return 'unable';
         if (!ac.ils) return 'unable, we are not cleared for an approach';
         if (ac.landClr) return 'already cleared to land';
         if (!this.opts.ai) g.warnRunwayOccupied(ac);
         ac.landClr = true;
         return `cleared to land runway ${ac.rwy}, wind ${g.windText()}`;
+      }
+      case 'FS': case 'EXT': case 'BASE': case 'ORBIT': {
+        const c = ac.circuit;
+        if (!c || !ac.airborne) return 'unable, we are not in the circuit';
+        if (cmd === 'FS') { c.left = 0; return 'full stop'; }
+        if (cmd === 'EXT') {
+          if (c.phase !== 'downwind' && c.phase !== 'upwind' && c.phase !== 'crosswind') return 'unable, already turning in';
+          c.extend = true;
+          return 'extending downwind';
+        }
+        if (cmd === 'BASE') {
+          c.extend = false;
+          if (c.orbit) c.orbit = null;
+          if (c.phase === 'downwind' && ac.finalGeometry().along > 0.5) c.phase = 'base';
+          return c.phase === 'base' ? 'turning base' : 'wilco, base when ready';
+        }
+        const dir = this.optional(cur, (t) => ({ L: 'L', LEFT: 'L', R: 'R', RIGHT: 'R' })[t] || null) || ac.awayFromRunway();
+        c.orbit = { dir, turned: 0 };
+        return `orbiting ${dir === 'R' ? 'right' : 'left'}`;
       }
       case 'SQ': {
         const code = arg();
