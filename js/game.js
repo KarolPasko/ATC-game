@@ -19,6 +19,7 @@ class Game {
     this.ui = new UI(this);
     this.voice = false;
     this.restart();
+    this.ui.initSetup?.();
     this.lastFrame = performance.now();
     this.uiTimer = 0;
     requestAnimationFrame((t) => this.frame(t));
@@ -106,7 +107,9 @@ class Game {
     if (this.time >= this.nextArr) {
       if (airborne < 18) this.spawnArrival();
       // Arrivals come in random gaps, sometimes as a bunch from different directions (an inbound wave).
-      this.nextArr = this.time + (Math.random() < 0.1 ? 40 + Math.random() * 30 : this.randomGap(t.arr));
+      // A single arrival runway takes fewer arrivals than a pair of parallels.
+      const mean = t.arr * (this.arrivalRunways().length > 1 ? 1 : 1.7);
+      this.nextArr = this.time + (Math.random() < 0.1 ? 40 + Math.random() * 30 : this.randomGap(mean));
     }
     if (this.time >= this.nextDep) {
       this.spawnDeparture();

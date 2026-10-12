@@ -3,7 +3,15 @@
 AIRPORTS.EGRV = {
   icao: 'EGRV',
   name: 'Ravenwood International',
-  summary: 'Fictional airport · parallel runways 08L/26R and 08R/26L · terminal between the runways',
+  summary: 'Fictional airport · parallel runways 08L/26R and 08R/26L, both used for arrivals and departures',
+  facts: ['Fictional, south-west coast', 'Parallel runways 08L/26R · 08R/26L', 'Mixed mode on both runways', '24 stands · terminal between the runways'],
+  configs: { 26: 'Runways 26L / 26R', '08': 'Runways 08L / 08R' },
+  notes: `<p>Ravenwood International is fictional. Parallel runways 08L/26R (north) and 08R/26L (south) are 1.4 km apart with the
+    terminal between them, and both take arrivals and departures. Departures use holding points A1/A7 (north runway) and B1/B7
+    (south); arrivals vacate via the rapid exits K1–K4 and M1–M4 or the connectors.</p>
+    <p>Arrivals enter on 11 STARs and fly an RNAV T-bar transition to the ILS (outer IAF, straight-in IAF, IF, FAF). The north
+    runway's approach is 1000 ft higher than the south one's, so arrivals stay separated until established. SIDs climb to
+    6000 ft (transition altitude 6000 ft) and splay 15° away from the parallel runway.</p>`,
 
   build() {
     Object.assign(AIRPORT, {
@@ -80,8 +88,8 @@ AIRPORTS.EGRV = {
     // straight-in IAF, the others the outer IAF; north arrivals land on the north runway, south ones on the south.
     // `alts`: altitude constraints flown when "descending via" after the approach clearance.
     Object.assign(CONFIGS, {
-      26: { label: 'Runways 26L / 26R', arr: ['26L', '26R'], dep: ['26L', '26R'], wind: 255 },
-      '08': { label: 'Runways 08L / 08R', arr: ['08L', '08R'], dep: ['08L', '08R'], wind: 75 },
+      26: { label: this.configs[26], arr: ['26L', '26R'], dep: ['26L', '26R'], wind: 255 },
+      '08': { label: this.configs['08'], arr: ['08L', '08R'], dep: ['08L', '08R'], wind: 75 },
     });
     Object.assign(PROCS, {
       26: {

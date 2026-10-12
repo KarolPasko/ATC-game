@@ -19,7 +19,8 @@
     <div class="item metar" id="metar"></div>
     <div class="spacer"></div>
     <div class="controls">
-      <select id="sel-pos" title="Your controller position (the other is flown by AI)">
+      <select id="sel-airport" title="Airport (opens the session setup)"></select>
+      <select id="sel-pos" title="Your controller position (the others are worked by AI)">
         <option value="ALL">Position: Combined</option>
         <option value="GND">Position: Ground</option>
         <option value="TWR">Position: Tower</option>
@@ -31,37 +32,44 @@
         <option value="med">Traffic: med</option>
         <option value="high">Traffic: high</option>
       </select>
-      <select id="sel-routes" title="Route lines">
-        <option value="sel">Routes: selected only</option>
-        <option value="all">Routes: all mine</option>
-        <option value="off">Routes: off</option>
-      </select>
-      <select id="sel-vector" title="Speed vector length">
-        <option value="0">Vector: off</option>
-        <option value="1">Vector: 1 min</option>
-        <option value="2">Vector: 2 min</option>
-        <option value="3">Vector: 3 min</option>
-        <option value="5">Vector: 5 min</option>
-      </select>
-      <select id="sel-history" title="History dots">
-        <option value="0">History: 0</option>
-        <option value="3">History: 3</option>
-        <option value="6">History: 6</option>
-        <option value="10">History: 10</option>
-      </select>
       <select id="sel-emg" title="How often emergencies happen">
         <option value="off">Emergencies: off</option>
         <option value="rare">Emergencies: rare</option>
         <option value="normal">Emergencies: normal</option>
       </select>
-      <label class="chk" title="Coastline, river, towns, airfields"><input type="checkbox" id="chk-map"> Map</label>
-      <label class="chk" title="Danger and restricted areas"><input type="checkbox" id="chk-areas"> Areas</label>
-      <label class="chk" title="CTR, TMA and sector lines"><input type="checkbox" id="chk-airspace"> Airspace</label>
-      <label class="chk"><input type="checkbox" id="chk-procs"> Procs</label>
       <label class="chk" title="AI ground handles pushback and taxi for your aircraft"><input type="checkbox" id="chk-autotaxi"> Auto taxi</label>
-      <label class="chk"><input type="checkbox" id="chk-voice"> Voice</label>
+      <div class="dropdown">
+        <button id="btn-display" aria-expanded="false" aria-controls="display-menu">Display ▾</button>
+        <div id="display-menu" class="menu" hidden>
+          <label>Route lines <select id="sel-routes">
+            <option value="sel">selected only</option>
+            <option value="all">all mine</option>
+            <option value="off">off</option>
+          </select></label>
+          <label>Speed vector <select id="sel-vector">
+            <option value="0">off</option>
+            <option value="1">1 min</option>
+            <option value="2">2 min</option>
+            <option value="3">3 min</option>
+            <option value="5">5 min</option>
+          </select></label>
+          <label>History dots <select id="sel-history">
+            <option value="0">0</option>
+            <option value="3">3</option>
+            <option value="6">6</option>
+            <option value="10">10</option>
+          </select></label>
+          <label class="chk"><input type="checkbox" id="chk-map"> Map: coast, towns, airfields</label>
+          <label class="chk"><input type="checkbox" id="chk-areas"> Danger / restricted areas</label>
+          <label class="chk"><input type="checkbox" id="chk-airspace"> CTR, TMA and sector lines</label>
+          <label class="chk"><input type="checkbox" id="chk-procs"> SID / STAR overlay</label>
+          <label class="chk"><input type="checkbox" id="chk-voice"> Pilot voice readbacks</label>
+        </div>
+      </div>
+      <span class="sep"></span>
       <button id="btn-pause">❚❚ Pause</button>
       <button id="btn-x1">x1</button><button id="btn-x2">x2</button><button id="btn-x4">x4</button>
+      <button id="btn-setup" title="Choose airport, position, runways and traffic">New session</button>
       <button id="btn-help">? Help</button>
     </div>
   </header>
@@ -99,29 +107,56 @@
     </div>
   </footer>
 
+  <div id="setup" hidden>
+    <div class="panel" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+      <h1 id="setup-title">Radar ATC</h1>
+      <p class="sub">Choose an airport, your position and the traffic, then start the session.</p>
+      <h3>Airport</h3>
+      <div id="setup-airports" class="cards"></div>
+      <h3>Position</h3>
+      <div id="setup-pos" class="cards four"></div>
+      <div class="row">
+        <label>Runways <select id="setup-config"></select></label>
+        <label>Traffic <select id="setup-traffic">
+          <option value="low">low</option><option value="med">medium</option><option value="high">high</option>
+        </select></label>
+        <label>Emergencies <select id="setup-emg">
+          <option value="off">off</option><option value="rare">rare</option><option value="normal">normal</option>
+        </select></label>
+      </div>
+      <div class="row end">
+        <label class="chk"><input type="checkbox" id="setup-show"> Show this at start</label>
+        <button id="setup-cancel">Cancel</button>
+        <button id="setup-start" class="primary">Start session ▶</button>
+      </div>
+    </div>
+  </div>
+
   <div id="help">
     <div class="panel">
       <button id="help-close">×</button>
       <h2>How to play</h2>
-      <p>You are approach and tower at Ravenwood International. <b>Arrivals</b> (magenta routes) enter on STARs and must be
+      <p>You are approach and tower at <b class="apt-name"></b>. <b>Arrivals</b> (magenta routes) enter on STARs and must be
         descended and cleared for an approach. <b>Departures</b> wait at the holding point: give them their clearance
         (<code>caf</code>), clear them for take-off (<code>cto</code>), climb them, and hand them off (<code>ho</code>)
         once they're above FL100 and 20 nm out. They follow their SID (blue route).</p>
       <p>Keep <b>3 nm or 1000 ft</b> between airborne aircraft, and on final keep <b>4 nm</b> behind a heavy (H) for another
         heavy and <b>5 nm</b> for a medium. Yellow tags = predicted conflict or wake spacing, red = separation lost.</p>
+      <h2>This airport</h2>
+      <div id="help-airport"></div>
       <h2>Ground chart</h2>
       <p>Switch to <b>Ground chart</b> (tab at the top left of the scope, or <code>.gnd</code>). It shows a detailed aerodrome chart:
         runways with threshold, touchdown-zone and aiming-point markings, approach lights, PAPIs and ILS antennas; taxiways with
         curved junction fillets; runway holding positions with stop bars and mandatory signs; stands with lead-in lines and jet
         bridges; the terminal, tower, fire station and cargo apron.</p>
       <p>Departures start on a stand and call Delivery. Give them <code>caf</code>, then assign the taxi route: <b>select the
-        aircraft, click the taxiways in order, then click the holding point</b> (A1/A7 for 08L/26R, B1/B7 for 08R/26L) and press
-        <b>Send taxi</b>. Or type it: <code>taxi A7 via P J3 A</code>. They push back in an arc (choose the facing with
-        <code>pb e</code> / <code>pb w</code>), then taxi along the curves on the chart, slowing for corners and stopping behind
+        aircraft, click the taxiways in order, then click the runway holding point</b> and press
+        <b>Send taxi</b>. Or type it, e.g. <code>taxi A7 via P J3 A</code> at Ravenwood or <code>taxi V5 via A G V</code> at Manchester.
+        They push back in an arc (choose the facing with <code>pb e</code> / <code>pb w</code>), then taxi along the curves on the chart, slowing for corners and stopping behind
         traffic. <b>At the runway holding point Ground hands them to Tower automatically.</b> Tower's <code>lu</code> /
         <code>cto</code> taxis them onto the runway (the stop bar goes off and the green lead-on lights come on) and, with a
         take-off clearance, rolls as soon as they are aligned.</p>
-      <p>Arrivals brake for the first exit they can make (rapid exits K/M are taken at speed). Once clear of the runway, Tower
+      <p>Arrivals brake for the first exit they can make (rapid exits are taken at speed). Once clear of the runway, Tower
         hands them to Ground automatically and they ask for taxi: <code>taxi</code> sends them to their stand
         (<code>taxi 14</code> for stand 14). <code>hpos</code> / <code>cont</code> stop and restart a taxiing aircraft.
         Right-click an aircraft on the chart for its instructions, or a holding point / stand for taxi options. With
@@ -162,7 +197,7 @@
       <p>Wind drifts aircraft that are flying a heading; on routes and the localizer the pilots correct for it. Turns are standard
         rate (3°/s) limited to 25° of bank, so fast aircraft turn wider. Holds are flown with proper direct, parallel and
         teardrop entries, 1-minute legs up to FL140 (1.5 min above), at holding speed (230 kt). Speed is limited to 250 kt below FL100.
-        Transition altitude is 6000 ft; pilots set QNH when descending below it. Published holds are marked with a dot under
+        Transition altitude is <span class="apt-ta"></span> ft; pilots set QNH when descending below it. Published holds are marked with a dot under
         the fix; hover a fix with an aircraft selected, or tick <i>Procs</i>, to see them.</p>
       <h2>Positions</h2>
       <p>Pick your position in the top bar (or <code>.pos gnd</code> / <code>.pos twr</code> / <code>.pos app</code> /

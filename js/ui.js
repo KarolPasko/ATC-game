@@ -43,12 +43,14 @@ class UI {
     // Typing anywhere goes to the command line.
     document.addEventListener('keydown', (e) => {
       if (e.target === this.input || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === 'Escape') { this.toggleHelp(false); return; }
+      if (e.key === 'Escape') { this.toggleHelp(false); this.toggleDisplay(false); this.closeSetup(); return; }
       if (e.key.length === 1 || e.key === 'Tab') this.input.focus();
     });
     $('btn-pause').onclick = () => g.togglePause();
     for (const r of [1, 2, 4]) $(`btn-x${r}`).onclick = () => g.setRate(r);
     $('btn-help').onclick = () => this.toggleHelp(true);
+    $('btn-display').onclick = (e) => { e.stopPropagation(); this.toggleDisplay(); };
+    document.addEventListener('mousedown', (e) => { if (!e.target.closest('.dropdown')) this.toggleDisplay(false); });
     $('help-close').onclick = () => this.toggleHelp(false);
     $('help').addEventListener('click', (e) => { if (e.target.id === 'help') this.toggleHelp(false); });
     $('sel-config').onchange = (e) => g.setConfig(e.target.value);
@@ -93,7 +95,126 @@ class UI {
     $('brand-name').textContent = AIRPORT.name;
     document.title = `${AIRPORT.icao} ${AIRPORT.name} · Radar ATC`;
     $('sel-config').innerHTML = Object.entries(CONFIGS).map(([id, c]) => `<option value="${esc(id)}">RWY ${esc(c.label)}</option>`).join('');
+    $('sel-airport').innerHTML = Object.values(AIRPORTS).map((a) => `<option value="${a.icao}">${a.icao} ${esc(a.name)}</option>`).join('');
+    $('sel-airport').value = AIRPORT_ID;
     this.input.placeholder = `e.g.  caf  ·  cto  ·  h 270 a 4000 s 210  ·  dct ${EX.fix}  ·  i ${EX.arr}  ·  app ${EX.arr}  ·  BAW123 ho`;
+    for (const el of document.querySelectorAll('.apt-name')) el.textContent = AIRPORT.name;
+    for (const el of document.querySelectorAll('.apt-ta')) el.textContent = AIRPORT.transAlt;
+    $('help-airport').innerHTML = AIRPORT_DEF.notes || '';
+  }
+
+  // ---------- session setup: airport, position, runways, traffic, emergencies ----------
+  initSetup() {
+    const g = this.game;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('atc.setup') || '{}') || {}; } catch (e) { saved = {}; }
+    this.setup = {
+      airport: AIRPORT_ID, position: saved.position || 'ALL',
+      config: saved.airport === AIRPORT_ID && CONFIGS[saved.config] ? saved.config : AIRPORT.defaultConfig,
+      traffic: saved.traffic || 'med', emg: saved.emg || 'rare', show: saved.show !== false,
+    };
+    let auto = false;
+    try { auto = sessionStorage.getItem('atc.autostart') === '1'; sessionStorage.removeItem('atc.autostart'); } catch (e) { auto = false; }
+    $('setup-airports').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-apt]');
+      if (!c) return;
+      this.setup.airport = c.dataset.apt;
+      const def = AIRPORTS[this.setup.airport];
+      this.setup.config = this.setup.airport === AIRPORT_ID ? g.config : Object.keys(def.configs)[0];
+      this.renderSetup();
+    });
+    $('setup-pos').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-pos]');
+      if (c) { this.setup.position = c.dataset.pos; this.renderSetup(); }
+    });
+    $('setup-config').onchange = (e) => { this.setup.config = e.target.value; };
+    $('setup-traffic').onchange = (e) => { this.setup.traffic = e.target.value; };
+    $('setup-emg').onchange = (e) => { this.setup.emg = e.target.value; };
+    $('setup-show').onchange = (e) => { this.setup.show = e.target.checked; };
+    $('setup-start').onclick = () => this.startSetup();
+    $('setup-cancel').onclick = () => this.closeSetup();
+    $('btn-setup').onclick = () => this.openSetup();
+    $('sel-airport').onchange = (e) => {
+      const id = e.target.value;
+      e.target.value = AIRPORT_ID;
+      this.openSetup(id);
+    };
+    if (auto || !this.setup.show) this.applySetup();
+    else this.openSetup();
+  }
+
+  openSetup(airport = AIRPORT_ID) {
+    const g = this.game;
+    this.setup.airport = airport;
+    if (airport === AIRPORT_ID) Object.assign(this.setup, { config: g.config, traffic: g.traffic, emg: g.emergency.rate, position: g.position });
+    else this.setup.config = Object.keys(AIRPORTS[airport].configs)[0];
+    this.setupWasPaused = g.paused;
+    g.paused = true;
+    this.renderSetup();
+    $('setup').hidden = false;
+    $('setup-start').focus();
+  }
+
+  closeSetup() {
+    if ($('setup').hidden) return;
+    $('setup').hidden = true;
+    this.game.paused = !!this.setupWasPaused;
+    this.input.focus();
+    this.update();
+  }
+
+  renderSetup() {
+    const s = this.setup;
+    $('setup-airports').innerHTML = Object.values(AIRPORTS).map((a) => `
+      <button class="card${a.icao === s.airport ? ' on' : ''}" data-apt="${a.icao}" aria-pressed="${a.icao === s.airport}">
+        <span class="ct"><b>${a.icao}</b> ${esc(a.name)}</span>
+        <span class="cd">${esc(a.summary)}</span>
+        <span class="cf">${(a.facts || []).map((f) => `<i>${esc(f)}</i>`).join('')}</span>
+      </button>`).join('');
+    const pos = [
+      ['ALL', 'Combined', 'Everything: ground, tower and approach'],
+      ['GND', 'Ground', 'Clearances, pushback and taxi'],
+      ['TWR', 'Tower', 'Runways: line-ups, take-offs, landings, crossings'],
+      ['APP', 'Approach', 'Arrivals to the ILS, departures to Control'],
+    ];
+    $('setup-pos').innerHTML = pos.map(([id, name, d]) => `
+      <button class="card${id === s.position ? ' on' : ''}" data-pos="${id}" aria-pressed="${id === s.position}">
+        <span class="ct"><b>${name}</b></span><span class="cd">${d}</span>
+      </button>`).join('');
+    const cfgs = AIRPORTS[s.airport].configs;
+    $('setup-config').innerHTML = Object.entries(cfgs).map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join('');
+    $('setup-config').value = cfgs[s.config] ? s.config : Object.keys(cfgs)[0];
+    $('setup-traffic').value = s.traffic;
+    $('setup-emg').value = s.emg;
+    $('setup-show').checked = s.show;
+    $('setup-start').textContent = s.airport === AIRPORT_ID ? 'Start session ▶' : `Load ${s.airport} and start ▶`;
+  }
+
+  startSetup() {
+    const s = this.setup;
+    s.config = $('setup-config').value;
+    try { localStorage.setItem('atc.setup', JSON.stringify(s)); } catch (e) { /* ignore */ }
+    if (s.airport !== AIRPORT_ID) {
+      try { sessionStorage.setItem('atc.autostart', '1'); } catch (e) { /* ignore */ }
+      switchAirport(s.airport);
+      return;
+    }
+    $('setup').hidden = true;
+    this.applySetup();
+    this.input.focus();
+  }
+
+  // Start a fresh session with the chosen settings at the current airport.
+  applySetup() {
+    const g = this.game, s = this.setup;
+    g.config = CONFIGS[s.config] ? s.config : AIRPORT.defaultConfig;
+    g.traffic = s.traffic;
+    g.emergency.rate = s.emg;
+    g.restart();
+    g.position = null;
+    g.setPosition(s.position);
+    g.paused = false;
+    this.update();
   }
 
   buildHelp() {
@@ -101,6 +222,14 @@ class UI {
   }
 
   toggleHelp(show) { $('help').classList.toggle('show', show); }
+
+  toggleDisplay(show) {
+    const m = $('display-menu');
+    if (show === undefined) show = m.hidden;
+    m.hidden = !show;
+    $('btn-display').setAttribute('aria-expanded', String(show));
+    $('btn-display').classList.toggle('on', show);
+  }
 
   log(text, cls, time) {
     const el = $('log');

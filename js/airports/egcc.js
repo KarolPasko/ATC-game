@@ -7,13 +7,28 @@
 AIRPORTS.EGCC = {
   icao: 'EGCC',
   name: 'Manchester',
-  summary: 'Real airport, approximated · 23R arrivals / 23L departures with runway crossings · MIRSI, ROSUN and DAYNE holds',
+  summary: 'Real layout, approximated · 23R arrivals and 23L departures, with departures crossing runway 23R',
+  facts: ['Real airport, positions approximate', 'Runways 05L/23R · 05R/23L (390 m apart)', 'Dual-runway ops with runway crossings', 'MIRSI · ROSUN · DAYNE holds'],
+  configs: { 23: '23R arr / 23L dep', '05': '05L arr / 05R dep', '23S': '23R single runway', '05S': '05L single runway' },
+  notes: `<p>Manchester's layout and procedures here are a realistic simplification. Runway geometry, holds, navaids and SID end
+    points are real but their positions are approximate, and the approach transition fixes and first SID fixes are simplified
+    coded points. Don't use any of it for real navigation.</p>
+    <p>Runway 1 (05L/23R) runs alongside the terminals; runway 2 (05R/23L) is 390 m to the south-east and staggered to the
+    south-west. In the dual-runway configurations arrivals land on 23R (05L) and departures leave from 23L (05R), so
+    <b>departures cross runway 1</b> at D, F, G or H. They stop at the stop bar (D1, F1, G1, H1), Ground hands them to Tower,
+    and Tower clears them with <code>cross</code> (or right-click › Cross) once no arrival is within about 3 nm and nothing is
+    rolling towards the crossing. A crossing aircraft occupies the runway until it reports vacated. The single-runway
+    configurations use 23R or 05L for everything (departures from J1 or A1).</p>
+    <p>Arrivals come in through the MIRSI (south-west), ROSUN (north) and DAYNE (south-east) holds, minimum FL70, then an RNAV
+    transition to the ILS: SE23R, NW23R or IA23R → IF23R → FF23R. SIDs climb to 5000 ft (transition altitude 5000 ft) and end
+    at EKLAD, ASMIM, DESIG, SANBA, LISTO, MONTY or KUXEM. The letter after the number is the runway: R 23R, Y 23L, S 05L, Z 05R.
+    The scope also shows the Liverpool CTR and the Manchester Low Level Route (SFC–1300 ft).</p>`,
 
   build() {
     Object.assign(AIRPORT, {
       icao: 'EGCC', name: 'Manchester Airport', city: 'Manchester', control: 'Manchester Control',
       elevation: 0, transAlt: 5000, sidTop: 5000, radarRange: 55, ctrRadius: 50,
-      axis: 51, defaultConfig: '23', pushDirs: { E: 'north-east', W: 'south-west' },
+      axis: 51, defaultConfig: '23', pushDirs: { E: 'north-east', W: 'south-west' }, seqBuffer: 3,
       freqs: { GND: '121.850', TWR: '118.625', APP: '118.575', CTR: '133.800' },
       tmaLabel: 'MANCHESTER TMA  (simplified)', ctrLabel: 'MANCHESTER CTR SFC-3500',
       airlineWeights: {
@@ -60,10 +75,10 @@ AIRPORTS.EGCC = {
 
     // ---- Runway configurations: dual-runway (arrivals runway 1, departures runway 2) or single-runway ----
     Object.assign(CONFIGS, {
-      23: { label: '23R arr / 23L dep', arr: ['23R'], dep: ['23L'], wind: 245 },
-      '05': { label: '05L arr / 05R dep', arr: ['05L'], dep: ['05R'], wind: 65 },
-      '23S': { label: '23R single runway', arr: ['23R'], dep: ['23R'], wind: 245 },
-      '05S': { label: '05L single runway', arr: ['05L'], dep: ['05L'], wind: 65 },
+      23: { label: this.configs[23], arr: ['23R'], dep: ['23L'], wind: 245 },
+      '05': { label: this.configs['05'], arr: ['05L'], dep: ['05R'], wind: 65 },
+      '23S': { label: this.configs['23S'], arr: ['23R'], dep: ['23R'], wind: 245 },
+      '05S': { label: this.configs['05S'], arr: ['05L'], dep: ['05L'], wind: 65 },
     });
 
     // STARs: entry, the hold, then a transition to an IAF of the landing runway.

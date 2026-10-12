@@ -130,6 +130,11 @@ class AIController {
     const g = this.game, n = GROUND.nodes[ac.holdShort];
     const phys = n.phys;
     if (this.nextArrival(ac, phys) < 3) return false;
+    // Room on the far side, so the aircraft won't stop on the runway behind traffic.
+    const k = ac.taxiPath.findIndex((m, i) => i > 0 && GROUND.nodes[m].kind !== 'rwy');
+    const beyond = ac.taxiPath.slice(k, k + 2).map((m) => GROUND.nodes[m]).filter(Boolean);
+    const near = (o) => beyond.some((b) => Geo.dist(o, b) * GROUND.M_PER_NM < 90);
+    if (g.aircraft.some((o) => o !== ac && o.onGround() && o.state !== 'landed' && near(o))) return false;
     return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
       o.state === 'takeoff' || (o.state === 'lineup' && (o.lining || o.ctoPending)) || (!o.isArr && o.airborne && o.alt < 300) ||
       ((o.state === 'landed' || (o.state === 'taxi' && o.vacating)) && (n.u - toLocal(o).u) * o.runway.dirU > -80)));
@@ -172,7 +177,8 @@ class AIController {
       if (!ac.isArr || !ac.airborne) continue;
       (byRwy[ac.rwy] = byRwy[ac.rwy] || []).push({ ac, rem: this.remaining(ac) });
     }
-    const need = (lead, ac) => (lead.wake === 'H' ? (ac.wake === 'H' ? 4 : 5) : 3) + 4;
+    const buffer = AIRPORT.seqBuffer ?? 4; // extra miles for compression on final
+    const need = (lead, ac) => (lead.wake === 'H' ? (ac.wake === 'H' ? 4 : 5) : 3) + buffer;
     for (const list of Object.values(byRwy)) {
       const flowing = list.filter((e) => e.ac.mode !== 'hold').sort((a, b) => a.rem - b.rem);
       const holding = list.filter((e) => e.ac.mode === 'hold').sort((a, b) => a.ac.holdSince - b.ac.holdSince);
@@ -185,7 +191,9 @@ class AIController {
         // Close in: slow to final approach speed early to stop the gap shrinking.
         if (rem < 16) { if (gap < n && ac.tgtSpd !== ac.perf.vapp + 10) this.cmd(ac, `s ${ac.perf.vapp + 10}`); continue; }
         if (ac.est) continue;
-        if (gap < n - 2 && rem > 20 && ac.route.length) {
+        // Once there is a stack, newcomers join it rather than taking the gaps meant for the holding traffic.
+        const queue = holding.length && !ac.releasedAt && rem > holding[0].rem - 2;
+        if ((gap < n - 2 || queue) && rem > 20 && ac.route.length) {
           const fix = ac.route.find((f) => HOLDS[f]) || APPROACHES[ac.rwy].outer;
           const stack = g.aircraft.filter((o) => o.mode === 'hold' && o.hold?.fix === fix).length;
           this.cmd(ac, `hold ${fix}`);
@@ -202,11 +210,11 @@ class AIController {
         }
       }
 
-      // Release the first aircraft in the hold when there is a gap in the flow for it.
+      // Release the first aircraft in the hold (first come, first served) when there is a gap in the flow for it.
       const first = holding[0];
-      if (first && first.ac.owner === 'APP' && first.ac.hold.phase === 'inbound') {
-        const clear = flowing.every((f) => Math.abs(f.rem - first.rem) > need(f.ac, first.ac) + 2);
-        if (clear) this.cmd(first.ac, `app ${first.ac.rwy}`);
+      if (first && first.ac.owner === 'APP') {
+        const clear = flowing.every((f) => Math.abs(f.rem - first.rem) > need(f.ac, first.ac) + 0.5);
+        if (clear) { this.cmd(first.ac, `app ${first.ac.rwy}`); first.ac.releasedAt = g.time; }
       }
     }
   }
