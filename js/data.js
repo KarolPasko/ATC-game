@@ -2,6 +2,7 @@
 const AIRPORT = {
   icao: 'EGRV',
   name: 'Ravenwood International',
+  city: 'Ravenwood',
   elevation: 0,
   transAlt: 6000,
   radarRange: 55, // aircraft beyond this are removed
@@ -257,22 +258,55 @@ const SID_TOP = 6000; // initial climb altitude on all SIDs
 // vapp: final approach speed, vr: rotate, max: max IAS, climb/desc: ft/min, turn: deg/s
 const TYPES = {
   A320: { wake: 'M', vapp: 138, vr: 145, max: 340, climb: 2500, desc: 2200, turn: 3 },
+  A20N: { wake: 'M', vapp: 136, vr: 142, max: 340, climb: 2600, desc: 2200, turn: 3 },
   A321: { wake: 'M', vapp: 142, vr: 150, max: 340, climb: 2300, desc: 2200, turn: 3 },
+  A21N: { wake: 'M', vapp: 140, vr: 148, max: 340, climb: 2400, desc: 2200, turn: 3 },
   B738: { wake: 'M', vapp: 145, vr: 150, max: 340, climb: 2500, desc: 2200, turn: 3 },
+  B38M: { wake: 'M', vapp: 143, vr: 148, max: 340, climb: 2600, desc: 2200, turn: 3 },
   E190: { wake: 'M', vapp: 130, vr: 135, max: 320, climb: 2800, desc: 2200, turn: 3 },
+  E195: { wake: 'M', vapp: 132, vr: 138, max: 320, climb: 2600, desc: 2200, turn: 3 },
   DH8D: { wake: 'M', vapp: 120, vr: 115, max: 280, climb: 1800, desc: 1800, turn: 3 },
+  AT76: { wake: 'M', vapp: 112, vr: 110, max: 250, climb: 1500, desc: 1600, turn: 3 },
+  A333: { wake: 'H', vapp: 140, vr: 155, max: 330, climb: 2000, desc: 2000, turn: 2.5 },
   A359: { wake: 'H', vapp: 145, vr: 155, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
+  B789: { wake: 'H', vapp: 147, vr: 160, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
   B77W: { wake: 'H', vapp: 150, vr: 165, max: 340, climb: 2000, desc: 2000, turn: 2.5 },
   B744: { wake: 'H', vapp: 155, vr: 165, max: 340, climb: 1800, desc: 2000, turn: 2.5 },
 };
-const TYPE_WEIGHTS = ['A320', 'A320', 'A321', 'B738', 'B738', 'E190', 'DH8D', 'A359', 'B77W', 'B744'];
+const TYPE_WEIGHTS = Object.keys(TYPES);
 
+// Operators with their radio telephony callsigns, typical fleets and how common they are.
 const AIRLINES = [
-  { icao: 'BAW', name: 'Speedbird' }, { icao: 'EZY', name: 'Easy' }, { icao: 'RYR', name: 'Ryanair' },
-  { icao: 'DLH', name: 'Lufthansa' }, { icao: 'AFR', name: 'Airfrans' }, { icao: 'KLM', name: 'KLM' },
-  { icao: 'UAE', name: 'Emirates' }, { icao: 'VIR', name: 'Virgin' }, { icao: 'SAS', name: 'Scandinavian' },
-  { icao: 'IBE', name: 'Iberia' }, { icao: 'AAL', name: 'American' }, { icao: 'UAL', name: 'United' },
+  { icao: 'BAW', name: 'Speedbird', fleet: ['A320', 'A20N', 'A321', 'B789', 'B77W', 'A359'], w: 3 },
+  { icao: 'SHT', name: 'Shuttle', fleet: ['A320', 'A20N'], w: 2 },
+  { icao: 'EZY', name: 'Easy', fleet: ['A320', 'A20N', 'A21N'], w: 4 },
+  { icao: 'RYR', name: 'Ryanair', fleet: ['B738', 'B38M'], w: 4 },
+  { icao: 'EXS', name: 'Channex', fleet: ['B738', 'A321', 'A21N'], w: 4 },
+  { icao: 'TOM', name: 'Tomjet', fleet: ['B738', 'B38M', 'B789'], w: 3 },
+  { icao: 'LOG', name: 'Logan', fleet: ['AT76', 'DH8D', 'E190'], w: 2 },
+  { icao: 'EIN', name: 'Shamrock', fleet: ['A320', 'A20N', 'A333'], w: 2 },
+  { icao: 'KLM', name: 'KLM', fleet: ['B738', 'E190', 'E195', 'B789'], w: 2 },
+  { icao: 'DLH', name: 'Lufthansa', fleet: ['A320', 'A21N', 'A359'], w: 2 },
+  { icao: 'AFR', name: 'Airfrans', fleet: ['A320', 'A20N', 'B77W'], w: 1 },
+  { icao: 'SWR', name: 'Swiss', fleet: ['A20N', 'A320'], w: 1 },
+  { icao: 'AUA', name: 'Austrian', fleet: ['A320', 'E195'], w: 1 },
+  { icao: 'BEL', name: 'Beeline', fleet: ['A320'], w: 1 },
+  { icao: 'TAP', name: 'Air Portugal', fleet: ['A20N', 'A321'], w: 1 },
+  { icao: 'VLG', name: 'Vueling', fleet: ['A320', 'A20N'], w: 1 },
+  { icao: 'IBE', name: 'Iberia', fleet: ['A320', 'A321', 'A333'], w: 1 },
+  { icao: 'SAS', name: 'Scandinavian', fleet: ['A20N', 'A320'], w: 1 },
+  { icao: 'FIN', name: 'Finnair', fleet: ['A320', 'A321'], w: 1 },
+  { icao: 'THY', name: 'Turkish', fleet: ['A321', 'B738', 'A333', 'B77W'], w: 1 },
+  { icao: 'UAE', name: 'Emirates', fleet: ['B77W'], w: 2 },
+  { icao: 'QTR', name: 'Qatari', fleet: ['B789', 'A359', 'B77W'], w: 1 },
+  { icao: 'ETD', name: 'Etihad', fleet: ['B789', 'A359'], w: 1 },
+  { icao: 'VIR', name: 'Virgin', fleet: ['A333', 'B789', 'A359'], w: 1 },
+  { icao: 'AAL', name: 'American', fleet: ['B77W', 'B789'], w: 1 },
+  { icao: 'UAL', name: 'United', fleet: ['B789', 'B77W'], w: 1 },
+  { icao: 'DAL', name: 'Delta', fleet: ['A333', 'A359'], w: 1 },
+  { icao: 'CLX', name: 'Cargolux', fleet: ['B744'], w: 1 },
 ];
+const AIRLINE_POOL = AIRLINES.flatMap((a) => Array(a.w).fill(a));
 
 // Outstations by direction, used for flight plan origins/destinations.
 const OUTSTATIONS = {

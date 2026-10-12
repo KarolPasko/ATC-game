@@ -363,11 +363,14 @@ class Aircraft {
 
   adjustSpeed(dt) {
     let target = this.tgtSpd ?? this.autoSpeed();
+    const e = this.emg && !this.emg.done ? this.emg : null;
+    const vapp = this.perf.vapp + (e?.vappAdd || 0); // e.g. a flapless approach after a hydraulic failure
     // Pilots slow to approach speed inside 5 nm regardless of assigned speed.
-    if (this.est && this.finalGeometry().along < 5) target = this.perf.vapp;
+    if (this.est && this.finalGeometry().along < 5) target = vapp;
     if (this.mode === 'hold') target = Math.min(target, HOLD_SPEED(this.alt));
     if (this.alt < 10000 && !this.handedOff) target = Math.min(target, 250);
-    target = Geo.clamp(target, this.perf.vapp, this.perf.max);
+    if (e?.maxSpd) target = Math.min(target, e.maxSpd);
+    target = Geo.clamp(target, vapp, this.perf.max);
     const d = target - this.spd;
     const step = (d > 0 ? 2 : 1.5) * dt;
     this.spd = Math.abs(d) <= step ? target : this.spd + Math.sign(d) * step;
@@ -390,7 +393,9 @@ class Aircraft {
       return;
     }
     const d = this.tgtAlt - this.alt;
-    const rate = ((d > 0 ? p.climb : p.desc) / 60) * dt * (this.alt > 20000 && d > 0 ? 0.7 : 1);
+    const e = this.emg && !this.emg.done ? this.emg : null;
+    const factor = d > 0 ? (e?.climb || 1) : (e?.desc || 1); // engine out climbs slowly, emergency descents are steep
+    const rate = ((d > 0 ? p.climb : p.desc) / 60) * dt * (this.alt > 20000 && d > 0 ? 0.7 : 1) * factor;
     this.alt = Math.abs(d) <= rate ? this.tgtAlt : this.alt + Math.sign(d) * rate;
   }
 
@@ -406,6 +411,7 @@ class Aircraft {
     this.hdg = this.runway.heading;
     this.est = this.gs = false;
     game.onLanded(this);
+    if (this.emg && !this.emg.done) game.emergency?.onLanded(this);
   }
 
   goAround(game, reason = 'going around') {

@@ -54,6 +54,15 @@ class UI {
     $('sel-traffic').onchange = (e) => g.setTraffic(e.target.value);
     $('sel-routes').onchange = (e) => g.radar.setRoutes(e.target.value);
     $('sel-pos').onchange = (e) => g.setPosition(e.target.value);
+    $('sel-emg').onchange = (e) => { g.emergency.setRate(e.target.value); g.log(`Emergencies: ${e.target.value}`, 'sys'); };
+    $('emgbar').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cs]');
+      if (!b) return;
+      const ac = g.findAircraft(b.dataset.cs);
+      if (!ac) return;
+      if (b.dataset.ack) g.commands.execute(`${ac.cs} ack`);
+      else g.select(ac);
+    });
     $('sel-vector').onchange = (e) => { g.radar.vectorMin = +e.target.value; g.radar.saveScope(); };
     $('sel-history').onchange = (e) => { g.radar.historyDots = +e.target.value; g.radar.saveScope(); };
     for (const k of ['map', 'areas', 'airspace']) $(`chk-${k}`).onchange = (e) => { g.radar.layers[k] = e.target.checked; g.radar.saveScope(); };
@@ -106,6 +115,8 @@ class UI {
     for (const r of [1, 2, 4]) $(`btn-x${r}`).classList.toggle('on', g.rate === r);
     $('sel-config').value = g.config;
     $('sel-pos').value = g.position;
+    $('sel-emg').value = g.emergency.rate;
+    this.renderEmergencies();
     $('metar').textContent = g.metar();
     $('sel-vector').value = String(g.radar.vectorMin);
     $('sel-history').value = String(g.radar.historyDots);
@@ -127,7 +138,7 @@ class UI {
   strip(ac) {
     const g = this.game;
     const sel = ac === g.selected ? ' sel' : '';
-    const conf = ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
+    const conf = ac.emg && !ac.emg.done ? ' emergency' : ac.conflict === 2 ? ' conflict' : ac.conflict === 1 ? ' stca' : '';
     let status, alt = ac.state === 'air' ? ac.altText() : '—';
     if (ac.state === 'stand') status = `${ac.cleared ? 'CLRD' : 'REQ CLR'} S${ac.stand}`;
     else if (ac.state === 'pushback') status = 'PUSHBACK';
@@ -151,6 +162,23 @@ class UI {
       <div class="al">${esc(alt)}</div>
       <div class="st">${esc(status)}</div>
     </div>`;
+  }
+
+  // Banner listing active emergencies, with an acknowledge button until acknowledged.
+  renderEmergencies() {
+    const list = this.game.emergency.active();
+    const bar = $('emgbar');
+    if (!list.length) { bar.hidden = true; this._emg = ''; return; }
+    const html = list.map((ac) => {
+      const e = ac.emg;
+      const lvl = e.level === 'RADIO' ? 'RADIO FAIL' : e.level;
+      const where = ac.state === 'air' ? `${ac.altText()} · ${Math.hypot(ac.x, ac.y).toFixed(0)} nm` : ac.state === 'landed' ? 'ON RUNWAY' : 'ON GROUND';
+      const fuel = e.endurance ? ` · fuel ${Math.max(0, Math.round((e.endurance - this.game.time) / 60))} min` : '';
+      return `<div class="emg-item${e.ack ? ' acked' : ''}"><button data-cs="${esc(ac.cs)}"><b>${esc(lvl)}</b> ${esc(ac.cs)} · ${esc(e.label)} · ${esc(where)}${esc(fuel)} · sq ${esc(ac.squawk)}</button>` +
+        (e.ack || e.type === 'RADIO' ? '' : `<button class="ack" data-cs="${esc(ac.cs)}" data-ack="1">ACK</button>`) + '</div>';
+    }).join('');
+    if (html !== this._emg) { bar.innerHTML = html; this._emg = html; }
+    bar.hidden = false;
   }
 
   renderStrips() {

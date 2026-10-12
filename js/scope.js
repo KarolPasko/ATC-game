@@ -112,7 +112,7 @@ Object.assign(Radar.prototype, {
     const ctx = this.ctx, g = this.game;
     const state = this.tagState(ac);
     const flash = state === 'concerned' && Math.floor(performance.now() / 350) % 2;
-    const fg = flash ? '#ffffff' : state === 'concerned' ? '#f4f0a0' : col;
+    const fg = ac.emg && !ac.emg.done ? col : flash ? '#ffffff' : state === 'concerned' ? '#f4f0a0' : col;
     const trend = ac.tgtAlt > ac.alt + 50 && !ac.gs ? '↑' : (ac.tgtAlt < ac.alt - 50 || ac.gs) ? '↓' : ' ';
     const alt = String(Math.round(ac.alt / 100)).padStart(3, '0');
     const cfl = ac.gs ? 'GS ' : ac.est ? 'LOC' : String(Math.round(ac.tgtAlt / 100)).padStart(3, '0');
@@ -125,7 +125,8 @@ Object.assign(Radar.prototype, {
     const spd = ac.tgtSpd ? `S${ac.tgtSpd}` : 'S--';
     const gsTxt = String(Math.round(ac.gs_kt() / 10)).padStart(2, '0');
     let extra = '';
-    if (ac.outgoing && g.time - ac.outgoing.t < 10) extra = ` →${ac.outgoing.to}`;
+    if (ac.emg && !ac.emg.done) extra = ` ${ac.emg.type === 'RADIO' ? 'RDOF' : 'EMG'} ${ac.squawk}`;
+    else if (ac.outgoing && g.time - ac.outgoing.t < 10) extra = ` →${ac.outgoing.to}`;
     else if (!g.userOwns(ac)) extra = ` ${ac.owner}`;
     else if (ac.isArr && ac.owner === 'TWR' && !ac.landClr && g.position === 'TWR') extra = ' CL?';
     const line1 = [{ t: ac.cs, f: 'cs' }, { t: (ac.wake === 'H' ? ' H' : '') + extra, f: null }];

@@ -18,6 +18,7 @@ const COLORS = {
   stca: '#ffd84a',
   conflict: '#ff4a4a',
   ground: '#b9c7d2',
+  emg: '#ff4f9a',
   vor: '#8fd3c4',
 };
 
@@ -568,6 +569,7 @@ class Radar {
   }
 
   tagColor(ac) {
+    if (ac.emg && !ac.emg.done) return !ac.emg.ack && Math.floor(performance.now() / 300) % 2 ? '#ffffff' : COLORS.emg;
     if (ac.conflict === 2) return COLORS.conflict;
     if (ac.conflict === 1) return COLORS.stca;
     if (ac === this.game.selected) return COLORS.tagSel;

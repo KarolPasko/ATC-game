@@ -11,6 +11,7 @@ class Game {
   constructor(canvas) {
     this.commands = new CommandProcessor(this);
     this.ai = new AIController(this);
+    this.emergency = new EmergencyManager(this);
     this.position = 'ALL';
     this.viewMode = 'radar'; // radar | ground
     this.autoTaxi = true; // AI ground handles taxiing for the player's aircraft
@@ -35,6 +36,7 @@ class Game {
     this.stats = { landed: 0, departed: 0, losses: 0, goArounds: 0 };
     this.conflictPairs = new Set();
     this.ai.lastTakeoff = {};
+    this.emergency.reset();
     this.nextArr = 5;
     this.nextDep = 15;
     this.atis = 'K';
@@ -48,12 +50,16 @@ class Game {
     this.log(`Welcome to ${AIRPORT.name} (${AIRPORT.icao}). Runways ${this.activeRunways().join(' & ')} in use.`, 'sys');
     this.log(`Information ${this.atis}: wind ${this.windText()}, QNH ${AIRPORT.qnh}, transition altitude ${AIRPORT.transAlt} ft.`, 'sys');
     this.log('Click an aircraft (or type its callsign) and enter commands below. Type .help for the command list.', 'sys');
-    this.spawnArrival();
+    // Start with traffic already in the sky: a few arrivals part-way in, one at the boundary, departures on stands.
+    for (const f of [0.25, 0.45, 0.65].slice(0, this.traffic === 'low' ? 2 : 3)) this.spawnArrival(f + Math.random() * 0.1);
     this.spawnArrival();
     this.spawnDeparture();
+    if (this.traffic !== 'low') this.spawnDeparture();
   }
 
   activeRunways() { return this.config === '26' ? ['26L', '26R'] : ['08L', '08R']; }
+  arrivalRunways() { return this.activeRunways(); }
+  departureRunways() { return this.activeRunways(); }
 
   // ---------- main loop ----------
   frame(now) {
@@ -87,6 +93,7 @@ class Game {
     WIND.spd = Math.max(0, this.windBase.spd + Math.sin(this.time / 170) * 3);
     for (const ac of this.aircraft) ac.update(dt, this);
     this.ai.update(dt);
+    this.emergency.update();
     this.checkBoundaries();
     this.checkLandingRunways();
     this.sepTimer = (this.sepTimer || 0) + dt;
@@ -97,24 +104,29 @@ class Game {
     const t = TRAFFIC[this.traffic];
     const airborne = this.aircraft.filter((a) => a.state === 'air').length;
     if (this.time >= this.nextArr) {
-      if (airborne < 16) this.spawnArrival();
-      this.nextArr = this.time + t.arr * (0.7 + Math.random() * 0.6);
+      if (airborne < 18) this.spawnArrival();
+      // Arrivals come in random gaps, sometimes as a bunch from different directions (an inbound wave).
+      this.nextArr = this.time + (Math.random() < 0.1 ? 40 + Math.random() * 30 : this.randomGap(t.arr));
     }
     if (this.time >= this.nextDep) {
       this.spawnDeparture();
-      this.nextDep = this.time + t.dep * (0.7 + Math.random() * 0.6);
+      this.nextDep = this.time + this.randomGap(t.dep);
     }
   }
 
   // ---------- traffic generation ----------
-  newCallsign() {
+  // A random flight: operator (weighted by how common it is), callsign and a type from its fleet.
+  newFlight() {
     for (;;) {
-      const al = rnd(AIRLINES);
-      const cs = al.icao + (Math.random() < 0.5 ? Math.floor(Math.random() * 900 + 100) : Math.floor(Math.random() * 90 + 10)) +
-        (Math.random() < 0.25 ? rnd(['A', 'K', 'W', 'X', 'G']) : '');
-      if (!this.aircraft.some((a) => a.cs === cs)) return cs;
+      const al = rnd(AIRLINE_POOL);
+      const n = Math.random() < 0.55 ? Math.floor(Math.random() * 900 + 100) : Math.floor(Math.random() * 90 + 10);
+      const cs = al.icao + n + (Math.random() < 0.3 ? rnd(['A', 'B', 'C', 'G', 'K', 'W', 'X', 'Y']) : '');
+      if (!this.aircraft.some((a) => a.cs === cs)) return { cs, type: rnd(al.fleet) };
     }
   }
+
+  // Exponential gaps between spawns (a Poisson process), kept within sensible bounds.
+  randomGap(mean) { return Geo.clamp(-Math.log(1 - Math.random()) * mean, 0.25 * mean, 3 * mean); }
 
   newSquawk() {
     for (;;) {
@@ -123,27 +135,46 @@ class Game {
     }
   }
 
-  spawnArrival() {
+  // A new arrival on a random STAR. With `along` (0-1) it starts part-way along its route (used at the start of a
+  // session so the airspace is already busy), at a level that fits how far in it is.
+  spawnArrival(along = 0) {
     const stars = PROCS[this.config].stars.filter((s) => {
       const e = FIXES[s.fixes[0]];
       return !this.aircraft.some((a) => a.state === 'air' && Geo.dist(a, e) < 12);
     });
-    if (!stars.length) return;
+    if (!stars.length) return null;
     const star = rnd(stars);
-    const entry = FIXES[star.fixes[0]];
     const route = starRoute(star);
-    const alt = 11000 + Math.floor(Math.random() * 6) * 1000;
-    const type = rnd(TYPE_WEIGHTS);
+    const path = [FIXES[star.fixes[0]], ...route.map((n) => FIXES[n])];
+    // Position along the STAR (before the approach fixes).
+    let pos = path[0], hdgTo = path[1], rest = route.slice();
+    if (along > 0) {
+      const legs = Math.max(1, star.fixes.length - 1);
+      let target = along * path.slice(0, legs + 1).reduce((d, p, i, arr) => d + (i ? Geo.dist(arr[i - 1], p) : 0), 0);
+      for (let i = 1; i <= legs; i++) {
+        const L = Geo.dist(path[i - 1], path[i]);
+        if (target <= L) { pos = Geo.offset(path[i - 1], Geo.bearing(path[i - 1], path[i]), target); hdgTo = path[i]; rest = route.slice(i - 1); break; }
+        target -= L;
+      }
+    }
+    const d = Math.hypot(pos.x, pos.y);
+    let alt = along > 0 ? Geo.clamp(Math.round((d * 300 + 1000) / 1000) * 1000, 7000, 16000) : 11000 + Math.floor(Math.random() * 9) * 1000;
+    // Don't appear on top of someone: pick a free level or give up this time.
+    const clash = (h) => this.aircraft.some((a) => a.state === 'air' && Geo.dist(a, pos) < 8 && Math.abs(a.alt - h) < 1500);
+    if (clash(alt)) alt += 2000;
+    if (clash(alt)) return null;
+    const { cs, type } = this.newFlight();
     const ac = new Aircraft({
-      cs: this.newCallsign(), type, kind: 'arr',
-      x: entry.x, y: entry.y, alt, tgtAlt: alt, spd: 280,
-      rwy: star.rwy, star: star.name, route, altCons: star.alts || {},
+      cs, type, kind: 'arr',
+      x: pos.x, y: pos.y, alt, tgtAlt: alt, spd: Math.min(TYPES[type].max - 20, (alt < 10000 ? 240 : 260) + Math.floor(Math.random() * 5) * 10),
+      rwy: star.rwy, star: star.name, route: rest, altCons: star.alts || {},
       orig: rnd(OUTSTATIONS[FIX_DIRECTION[star.fixes[0]]]), dest: AIRPORT.icao,
       squawk: this.newSquawk(), cleared: true, owner: 'APP',
     });
-    ac.hdg = ac.tgtHdg = Geo.bearing(entry, FIXES[route[0]]);
+    ac.hdg = ac.tgtHdg = Geo.bearing(pos, hdgTo);
     this.aircraft.push(ac);
-    ac.say(this, `Ravenwood Approach, good day, ${ac.altText().startsWith('F') ? 'flight level ' + Math.round(alt / 100) : alt + ' ft'}, ${star.name} arrival, expecting runway ${star.rwy}`);
+    ac.say(this, `${AIRPORT.city} Approach, good day, ${ac.altWords(alt)}, ${star.name} arrival, expecting runway ${star.rwy}`);
+    return ac;
   }
 
   // Departures start at a free stand and call Delivery for their clearance.
@@ -156,7 +187,7 @@ class Game {
     const st = GROUND.stands[stand];
     const n = GROUND.nodes[st.node];
     const ac = new Aircraft({
-      cs: this.newCallsign(), type: rnd(TYPE_WEIGHTS), kind: 'dep',
+      ...this.newFlight(), kind: 'dep',
       x: n.x, y: n.y, alt: 0, tgtAlt: 0, spd: 0,
       state: 'stand', stand, gnode: st.node, rwy: sid.rwy, sid: sid.name, route: sid.fixes.slice(),
       orig: AIRPORT.icao, dest: rnd(OUTSTATIONS[FIX_DIRECTION[sid.fixes[sid.fixes.length - 1]]]),
@@ -165,7 +196,7 @@ class Game {
     });
     ac.hdg = ac.tgtHdg = Geo.bearing(n, GROUND.toWorld(st.u, 0)); // nose-in to the terminal
     this.aircraft.push(ac);
-    ac.say(this, `Ravenwood Delivery, stand ${stand}, information ${this.atis}, IFR to ${ac.dest}, request clearance`);
+    ac.say(this, `${AIRPORT.city} Delivery, stand ${stand}, information ${this.atis}, IFR to ${ac.dest}, request clearance`);
   }
 
   freeStand() {
@@ -216,7 +247,7 @@ class Game {
     // Tower hands a missed approach straight back to Approach for re-sequencing.
     if (ac.owner === 'TWR') {
       ac.owner = 'APP';
-      if (this.position !== 'ALL') this.log(`Ravenwood Tower: ${ac.cs} going around, transferred back to Approach`, 'sys');
+      if (this.position !== 'ALL') this.log(`${AIRPORT.city} Tower: ${ac.cs} going around, transferred back to Approach`, 'sys');
     }
   }
 
@@ -245,24 +276,24 @@ class Game {
         if (ac.alt <= 5000 && d < 12) this.addScore(30, `${ac.cs} transferred to Departure`);
         else this.addScore(10, `${ac.cs} transferred to Departure late`);
       }
-      this.pilotSay(ac, `Ravenwood Departure, passing ${Math.round(ac.alt / 100) * 100} ft climbing ${ac.altWords(ac.tgtAlt)}, ${ac.sid}`);
+      this.pilotSay(ac, `${AIRPORT.city} Departure, passing ${Math.round(ac.alt / 100) * 100} ft climbing ${ac.altWords(ac.tgtAlt)}, ${ac.sid}`);
     }
     if (from === 'APP' && to === 'TWR' && ac.isArr) {
       if (scored) this.addScore(ac.est ? 20 : 10, `${ac.cs} transferred to Tower${ac.est ? '' : ' (not yet established)'}`);
-      if (!silent) this.pilotSay(ac, `Ravenwood Tower, ILS ${ac.rwy}${ac.est ? ' established' : ''}, ${ac.finalGeometry().along.toFixed(0)} miles`);
+      if (!silent) this.pilotSay(ac, `${AIRPORT.city} Tower, ILS ${ac.rwy}${ac.est ? ' established' : ''}, ${ac.finalGeometry().along.toFixed(0)} miles`);
     }
     // Ground -> Tower at the holding point; Tower -> Ground after vacating.
     if (from === 'GND' && to === 'TWR' && !ac.isArr) {
       if (scored) this.stats.departed++;
       if (scored) this.addScore(ac.state === 'ground' ? 10 : 5, `${ac.cs} transferred to Tower`);
       if (!silent) this.pilotSay(ac, ac.state === 'ground'
-        ? `Ravenwood Tower, holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`
-        : `Ravenwood Tower, taxiing to holding point ${ac.taxiTarget}, runway ${ac.rwy}`);
+        ? `${AIRPORT.city} Tower, holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`
+        : `${AIRPORT.city} Tower, taxiing to holding point ${ac.taxiTarget}, runway ${ac.rwy}`);
       ac.waitSince = this.time;
     }
     if (from === 'TWR' && to === 'GND' && ac.isArr) {
       if (scored) this.addScore(10, `${ac.cs} transferred to Ground`);
-      if (!silent) this.pilotSay(ac, `Ravenwood Ground, vacated via ${ac.vacatedVia || 'the runway'}, request taxi to stand ${ac.stand}`);
+      if (!silent) this.pilotSay(ac, `${AIRPORT.city} Ground, vacated via ${ac.vacatedVia || 'the runway'}, request taxi to stand ${ac.stand}`);
       ac.waitSince = this.time;
     }
     ac.transferWarned = false;
@@ -280,7 +311,7 @@ class Game {
       if (this.position === 'GND') this.stats.departed++;
       this.addScore(10, `${ac.cs} taxied to holding point ${ac.gnode}`);
     }
-    if (this.position !== 'ALL') this.log(`Ravenwood Ground: ${ac.cs}, holding point ${ac.gnode}, contact Tower ${POSITIONS.TWR.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
+    if (this.position !== 'ALL') this.log(`${AIRPORT.city} Ground: ${ac.cs}, holding point ${ac.gnode}, contact Tower ${POSITIONS.TWR.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
     this.transfer(ac, 'TWR', { ai: true, silent: this.position === 'ALL' });
     if (this.position === 'ALL') this.pilotSay(ac, `holding point ${ac.gnode}, runway ${ac.rwy}, ready for departure`);
   }
@@ -288,11 +319,12 @@ class Game {
   // Once an arrival is clear of the runway, Tower hands it to Ground automatically.
   onVacated(ac) {
     ac.waitSince = this.time;
+    if (ac.emg && !ac.emg.done) { ac.emg.done = true; ac.squawk = ac.emg.oldSquawk; }
     if (ac.owner !== 'TWR') {
       this.pilotSay(ac, `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`);
       return;
     }
-    if (this.position !== 'ALL') this.log(`Ravenwood Tower: ${ac.cs}, vacated via ${ac.vacatedVia}, contact Ground ${POSITIONS.GND.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
+    if (this.position !== 'ALL') this.log(`${AIRPORT.city} Tower: ${ac.cs}, vacated via ${ac.vacatedVia}, contact Ground ${POSITIONS.GND.freq}`, this.userOwns(ac) ? 'sys' : 'ai');
     this.transfer(ac, 'GND', { ai: true, silent: this.position === 'ALL' });
     if (this.position === 'ALL') this.pilotSay(ac, `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`);
   }
@@ -485,9 +517,11 @@ class Game {
 
   // Calls on a frequency the player isn't working (AI-controlled) are shown dimmed and not spoken.
   pilotSay(ac, text, ai = !this.userOwns(ac)) {
-    this.log(`${ac.cs}: ${text}`, ai ? 'ai' : 'pilot');
-    if (!ai && this.voice && window.speechSynthesis) {
+    const emg = /^(MAYDAY|PAN PAN)/.test(text);
+    this.log(`${ac.cs}: ${text}`, emg ? 'emg' : ai ? 'ai' : 'pilot');
+    if ((!ai || emg) && this.voice && window.speechSynthesis) {
       const al = AIRLINES.find((a) => ac.cs.startsWith(a.icao));
+      // Spoken like a pilot: telephony callsign then the digits/letters individually.
       const spoken = (al ? al.name + ' ' + ac.cs.slice(3).split('').join(' ') : ac.cs) + ', ' + text.replace(/\b(\d{3,4})\b/g, (m) => m.split('').join(' '));
       const u = new SpeechSynthesisUtterance(spoken);
       u.rate = 1.15;

@@ -4,10 +4,10 @@
 // Approach (APP): arrivals from entry to the localizer, departures from tower until the next sector.
 const POSITIONS = {
   ALL: { name: 'Combined GND + TWR + APP', short: 'ALL' },
-  GND: { name: 'Ground (DEL/GND)', short: 'GND', freq: '121.800', call: 'Ravenwood Ground' },
-  TWR: { name: 'Tower', short: 'TWR', freq: '118.500', call: 'Ravenwood Tower' },
-  APP: { name: 'Approach / Departure', short: 'APP', freq: '119.725', call: 'Ravenwood Approach' },
-  CTR: { name: 'Ravenwood Control', short: 'CTR', freq: '128.400', call: 'Ravenwood Control' },
+  GND: { name: 'Ground (DEL/GND)', short: 'GND', freq: '121.800', call: `${AIRPORT.city} Ground` },
+  TWR: { name: 'Tower', short: 'TWR', freq: '118.500', call: `${AIRPORT.city} Tower` },
+  APP: { name: 'Approach / Departure', short: 'APP', freq: '119.725', call: `${AIRPORT.city} Approach` },
+  CTR: { name: AIRPORT.control || `${AIRPORT.city} Control`, short: 'CTR', freq: '128.400', call: AIRPORT.control || `${AIRPORT.city} Control` },
 };
 
 class AIController {
@@ -127,6 +127,8 @@ class AIController {
   // ---------- AI approach ----------
   approach(ac) {
     if (!ac.airborne) return;
+    // Emergency descent: let it get down first.
+    if (ac.emg && !ac.emg.done && ac.emg.type === 'PRESSURE' && !ac.emg.levelled) return;
     if (ac.isArr) {
       if (ac.est) { this.cmd(ac, 'ho'); return; }
       // After a go-around, let it climb away for a minute before re-clearing the approach.
@@ -163,7 +165,7 @@ class AIController {
 
       for (let i = 1; i < flowing.length; i++) {
         const lead = flowing[i - 1], { ac, rem } = flowing[i];
-        if (ac.owner !== 'APP') continue;
+        if (ac.owner !== 'APP' || (ac.emg && !ac.emg.done)) continue; // emergencies get priority, never delayed
         const n = need(lead.ac, ac);
         const gap = rem - lead.rem;
         // Close in: slow to final approach speed early to stop the gap shrinking.
@@ -202,7 +204,7 @@ class AIController {
       if (!ac.isArr || !ac.est || ac.owner !== 'APP' || ac.towerWarned) continue;
       if (ac.finalGeometry().along < 5) {
         ac.towerWarned = true;
-        g.log(`Ravenwood Tower: ${ac.cs} is on a ${ac.finalGeometry().along.toFixed(0)} nm final, still on your frequency — transfer it (ho) or it will go around`, 'err');
+        g.log(`${AIRPORT.city} Tower: ${ac.cs} is on a ${ac.finalGeometry().along.toFixed(0)} nm final, still on your frequency — transfer it (ho) or it will go around`, 'err');
       }
     }
   }

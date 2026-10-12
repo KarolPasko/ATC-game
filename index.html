@@ -52,6 +52,11 @@
         <option value="6">History: 6</option>
         <option value="10">History: 10</option>
       </select>
+      <select id="sel-emg" title="How often emergencies happen">
+        <option value="off">Emergencies: off</option>
+        <option value="rare">Emergencies: rare</option>
+        <option value="normal">Emergencies: normal</option>
+      </select>
       <label class="chk" title="Coastline, river, towns, airfields"><input type="checkbox" id="chk-map"> Map</label>
       <label class="chk" title="Danger and restricted areas"><input type="checkbox" id="chk-areas"> Areas</label>
       <label class="chk" title="CTR, TMA and sector lines"><input type="checkbox" id="chk-airspace"> Airspace</label>
@@ -73,6 +78,7 @@
       </div>
       <div id="ctxmenu" hidden></div>
       <div id="tagpop" hidden></div>
+      <div id="emgbar" hidden></div>
       <div id="taxibuild" hidden></div>
       <div id="legend">
         <span><i class="ln dep"></i>Departure route</span>
@@ -123,6 +129,23 @@
         (<code>taxi 14</code> for stand 14). <code>hpos</code> / <code>cont</code> stop and restart a taxiing aircraft.
         Right-click an aircraft on the chart for its instructions, or a holding point / stand for taxi options. With
         <b>Auto taxi</b> ticked, ground movement is handled for you.</p>
+      <h2>Emergencies</h2>
+      <p>Rarely, an aircraft has an emergency. It calls <b>MAYDAY</b> or <b>PAN</b>, squawks 7700 (7600 for a radio failure), and a
+        banner appears on the scope. Acknowledge it with <code>ack</code> (this alerts the emergency services), then give it
+        priority: the shortest safe route to the runway, other traffic kept out of its way or held.</p>
+      <table>
+        <tr><td><b>Engine failure</b> (MAYDAY)</td><td>After take-off: stops climbing around 3000–4000 ft with poor performance and
+          asks for vectors back to land. It may stop on the runway after landing.</td></tr>
+        <tr><td><b>Bird strike</b> (PAN)</td><td>After take-off: returns to land.</td></tr>
+        <tr><td><b>Medical</b> (PAN)</td><td>Arrival asks for a priority approach; a quick landing earns a bonus.</td></tr>
+        <tr><td><b>Minimum fuel</b> (MAYDAY)</td><td>Cannot hold. Land it before its fuel endurance runs out, or it diverts.</td></tr>
+        <tr><td><b>Depressurisation</b> (MAYDAY)</td><td>Emergency descent to FL100 with a turn off track. Watch for traffic below it.</td></tr>
+        <tr><td><b>Hydraulic failure</b> (PAN)</td><td>Faster, longer final, and it stops on the runway, closing it for about 5 minutes
+          until it is towed clear.</td></tr>
+        <tr><td><b>Radio failure</b> (7600)</td><td>No replies. It follows its route, flies the approach and lands. Keep everything
+          else clear of it.</td></tr>
+      </table>
+      <p>Set how often they happen in the toolbar, or practise with <code>.emg engine</code>, <code>.emg fuel</code> and so on.</p>
       <h2>EuroScope-style scope</h2>
       <p>Data tags show callsign, Mode-C level ↑↓ cleared level, ground speed/10, heading or next fix, and assigned speed.
         <b>Click a tag field</b> to open its list: the cleared level, the heading/direct-to field (with turn direction), or the
@@ -181,6 +204,7 @@
   <script src="js/ground.js"></script>
   <script src="js/commands.js"></script>
   <script src="js/ai.js"></script>
+  <script src="js/emergency.js"></script>
   <script src="js/map.js"></script>
   <script src="js/radar.js"></script>
   <script src="js/scope.js"></script>

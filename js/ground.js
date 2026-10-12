@@ -557,6 +557,15 @@ Object.assign(Aircraft.prototype, {
   },
 
   rollOut(dt, game) {
+    // An emergency aircraft that stops on the runway: brake to a halt, wait for inspection, then get towed.
+    if (this.emg?.stop && !this.emg.done) {
+      if (this.spd > 0) {
+        this.spd = Math.max(0, this.spd - 3 * dt);
+        this.move(dt);
+        if (this.spd === 0) game.emergency?.onStopped(this);
+      } else if (this.emg.stoppedAt !== undefined && game.time - this.emg.stoppedAt > 300) game.emergency?.towed(this);
+      return;
+    }
     if (!this.exit) this.chooseExit();
     const n = GROUND.nodes[this.exit.rwyNode];
     const dirSign = this.runway.heading === 80 ? 1 : -1;
@@ -1069,6 +1078,12 @@ class GroundView {
     const sel = ac === g.selected;
     const mine = g.userOwns(ac);
     const col = sel ? '#5ff0ff' : !mine ? '#7a8a96' : ac.isArr ? '#ff7be6' : '#7fb2ff';
+    if (ac.emg && !ac.emg.done) {
+      // Emergency: pulsing ring (fire service in attendance once on the ground)
+      const k = (performance.now() / 600) % 1;
+      ctx.strokeStyle = `rgba(255,79,154,${1 - k})`; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 10 + k * 18, 0, Math.PI * 2); ctx.stroke();
+    }
     const airborne = ac.state === 'air' || ac.state === 'takeoff';
     // Silhouette scaled to wingspan
     const span = (ac.wake === 'H' ? 64 : ac.type === 'DH8D' ? 28 : 35) * this.view.scale;

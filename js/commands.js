@@ -19,12 +19,14 @@ const COMMAND_HELP = [
   ['GA', 'Go around'],
   ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm'],
   ['ASM', 'Assume an aircraft handed to you (its tag flashes until you do)'],
+  ['ACK', 'Acknowledge a MAYDAY / PAN call (alerts the emergency services)'],
   ['HO', 'Transfer: Ground→Tower (departures), Tower→Ground (vacated arrivals), Tower→Departure, Approach→Tower, Departure→Control'],
   ['SQ 4521', 'Squawk code'],
   ['DEL', 'Delete aircraft'],
   ['.pause  .speed 2', 'Pause / simulation rate (1, 2, 4)'],
   ['.pos gnd|twr|app|all', 'Switch controller position (the other one is flown by AI)'],
   ['.gnd / .radar', 'Show the ground (taxi) chart / the radar scope'],
+  ['.emg [type] / .emg off|rare|normal', 'Trigger an emergency now (engine, bird, medical, fuel, pressure, hydraulic, radio) or set how often they happen'],
   ['.rbl clear', 'Remove all range/bearing lines (Shift+drag or middle-drag draws one)'],
   ['.autotaxi', 'Toggle automatic taxiing of your aircraft'],
   ['.config 26 / 08', 'Change runway configuration'],
@@ -41,7 +43,7 @@ const CMD_ALIASES = {
   S: 'S', SPD: 'S',
   DCT: 'DCT', DIR: 'DCT', PD: 'DCT', DT: 'DCT',
   I: 'I', ILS: 'I', APP: 'APP',
-  CL: 'CL', CTL: 'CL', CLAND: 'CL', ASM: 'ASM', ASSUME: 'ASM',
+  CL: 'CL', CTL: 'CL', CLAND: 'CL', ASM: 'ASM', ASSUME: 'ASM', ACK: 'ACK', ROGER: 'ACK',
   PB: 'PB', PUSH: 'PB', TAXI: 'TAXI', TX: 'TAXI', HPOS: 'HPOS', HOLDPOS: 'HPOS', CONT: 'CONT',
   CAF: 'CAF', CLR: 'CAF', LU: 'LU', LUAW: 'LU', CTO: 'CTO', CT: 'CTO', TO: 'CTO',
   HOLD: 'HOLD', RES: 'RES', RON: 'RES', GA: 'GA', HO: 'HO', CTR: 'HO', SQ: 'SQ', DEL: 'DEL',
@@ -100,6 +102,10 @@ class CommandProcessor {
       return g.log(`${ac.cs} is not on your frequency — it is with ${who.name}${ac.owner !== 'CTR' ? ' (AI)' : ''}`, 'err');
     }
     g.log(`${opts.ai ? `[${POSITIONS[ac.owner].short} AI] ` : ''}${ac.cs} ${toks.join(' ').toLowerCase()}`, opts.ai ? 'ai' : 'ctl');
+    // Radio failure: the crew can't hear us (only an acknowledgement on our side is possible).
+    if (ac.emg?.type === 'RADIO' && !ac.emg.done && ac.state === 'air' && !toks.every((t) => CMD_ALIASES[t] === 'ACK')) {
+      return g.log(`${ac.cs}: — no reply — (squawking 7600)`, opts.ai ? 'ai' : 'emg');
+    }
 
     const rb = [];
     const cur = { toks, i: 0, next() { return this.toks[++this.i]; }, peek() { return this.toks[this.i + 1]; } };
@@ -219,6 +225,7 @@ class CommandProcessor {
       }
       case 'HOLD': {
         if (this.needAir(ac)) return this.needAir(ac);
+        if (ac.emg?.noHold && !ac.emg.done) return 'unable to hold, MAYDAY fuel';
         const fix = this.optional(cur, (t) => FIXES[t] && t) || (ac.mode === 'route' && ac.route[0]) || null;
         if (!fix) return 'say again hold fix?';
         const inbound = this.optional(cur, (t) => (/^\d{3}$/.test(t) && +t <= 360 ? +t || 360 : null));
@@ -321,6 +328,11 @@ class CommandProcessor {
         if (ac.state !== 'taxi' || !ac.holdPos) return 'unable';
         ac.holdPos = false;
         return 'continuing taxi';
+      case 'ACK': {
+        if (!ac.emg || ac.emg.done) return null;
+        if (g.emergency.acknowledge(ac)) g.log(`${ac.cs}, roger ${ac.emg.level === 'RADIO' ? 'radio failure' : ac.emg.level}${ac.emg.level !== 'RADIO' ? ', emergency services alerted' : ''}`, 'ctl');
+        return null;
+      }
       case 'ASM':
         if (ac.incoming === null || ac.incoming === undefined) return null;
         ac.incoming = null;
@@ -477,6 +489,13 @@ class CommandProcessor {
       case 'clear': g.ui.clearLog(); break;
       case 'restart': g.restart(); break;
       case 'gnd': case 'ground': case 'taxi': g.setView('ground'); break;
+      case 'emg': case 'emergency': {
+        const typ = a ? a.toUpperCase() : null;
+        if (typ && ['OFF', 'RARE', 'NORMAL'].includes(typ)) { g.emergency.setRate(a); g.log(`Emergencies: ${a}`, 'sys'); g.ui.update(); break; }
+        if (typ && !EMERGENCIES[typ]) { g.log(`Usage: .emg [${Object.keys(EMERGENCIES).join('|').toLowerCase()}] or .emg off|rare|normal`, 'err'); break; }
+        if (!g.emergency.trigger(typ, g.selected)) g.log('No suitable aircraft for that emergency right now', 'err');
+        break;
+      }
       case 'rbl': g.radar.rbls = []; g.log('Range/bearing lines cleared', 'sys'); break;
       case 'radar': case 'scope': g.setView('radar'); break;
       case 'autotaxi': g.autoTaxi = !g.autoTaxi; g.log(`Automatic taxi ${g.autoTaxi ? 'on' : 'off'}`, 'sys'); g.ui.update(); break;
