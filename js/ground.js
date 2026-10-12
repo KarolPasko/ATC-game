@@ -31,11 +31,13 @@ const GROUND = (() => {
     return name;
   };
 
-  const holdingPoints = {}; // departure runway id -> holding point node name
+  const holdingPoints = {}; // departure runway id -> its main holding point node name
+  const depHolds = {}; // departure runway id -> all its departure holding points (full length and intersections)
   const exits = {}; // runway id -> [{ name, rwyNode, exitNode, u, rapid }]
   const stands = {}; // number -> { num, node, lane, u, v, bridge, hdg }
   const signs = []; // taxiway labels { text, u, v }
-  const dims = AIRPORT_DEF.ground({ node, edge, chain, hold, nodes, holdingPoints, exits, stands, signs, toWorld });
+  const dims = AIRPORT_DEF.ground({ node, edge, chain, hold, nodes, holdingPoints, depHolds, exits, stands, signs, toWorld });
+  for (const [rw, hp] of Object.entries(holdingPoints)) if (!depHolds[rw]) depHolds[rw] = [hp];
 
   // Runway nodes know their physical runway; stands face from the taxilane into the stand (nose-in).
   for (const p of RUNWAY_PHYS) for (const n of Object.values(nodes)) if (n.kind === 'rwy' && Math.abs(n.v - p.v) < 1) n.phys = p.phys;
@@ -126,6 +128,11 @@ const GROUND = (() => {
     return best;
   }
 
+  // Holding point a departure taxis to by default (an airport may pick an intersection for some SIDs).
+  const departureHold = (ac) => AIRPORT_DEF.depHoldFor?.(ac) || holdingPoints[ac.rwy];
+  // Runways a holding point is a departure holding point for.
+  const holdRunways = (name) => Object.keys(depHolds).filter((rw) => depHolds[rw].includes(name));
+
   // Name of a physical runway as used now (e.g. "23R"), for crossings and signs.
   function runwayName(phys, game) {
     const inUse = game ? game.activeRunways().find((id) => RUNWAYS[id].phys === phys) : null;
@@ -133,7 +140,7 @@ const GROUND = (() => {
   }
 
   return {
-    M_PER_NM, U, V, toWorld, nodes, edges, adj, edgeBetween, route, nearestNode, nearestEdge, holdingPoints, exits, stands, signs,
+    M_PER_NM, U, V, toWorld, nodes, edges, adj, edgeBetween, route, nearestNode, nearestEdge, holdingPoints, depHolds, departureHold, holdRunways, exits, stands, signs,
     taxiwayNames, runwayName, dims: { TWY_W: 23, ...dims },
   };
 })();
@@ -346,7 +353,7 @@ Object.assign(Aircraft.prototype, {
   pushback(face = null) {
     if (this.state !== 'stand') return false;
     if (!face) {
-      const hp = GROUND.nodes[GROUND.holdingPoints[this.rwy]];
+      const hp = GROUND.nodes[GROUND.departureHold(this)];
       face = hp.u > GROUND.stands[this.stand].u ? 'E' : 'W';
     }
     this.beginPushback(face, []);
@@ -359,7 +366,7 @@ Object.assign(Aircraft.prototype, {
     if (this.state === 'pushback') return this.pushUpdate(dt, game);
     if (this.state !== 'taxi') return;
     if (!this.taxiPath.length) {
-      if (!this.isArr && this.gnode === GROUND.holdingPoints[this.rwy]) return this.arriveAt(game); // already there
+      if (!this.isArr && GROUND.depHolds[this.rwy]?.includes(this.gnode)) return this.arriveAt(game); // already there
       this.spd = Math.max(0, this.spd - 4 * dt); this.coast(dt); return;
     }
     this.taxiStep(dt, game);
@@ -513,7 +520,7 @@ Object.assign(Aircraft.prototype, {
   arriveAt(game) {
     this.spd = 0;
     const n = GROUND.nodes[this.gnode];
-    if (!this.isArr && this.gnode === GROUND.holdingPoints[this.rwy]) {
+    if (!this.isArr && GROUND.depHolds[this.rwy]?.includes(this.gnode)) {
       this.state = 'ground';
       this.hdg = Geo.bearing(n, GROUND.nodes[n.rwyNode]);
       game.onReachedHoldingPoint(this);
@@ -611,7 +618,7 @@ class GroundView {
     const b = this.build, g = this.radar.game;
     const ac = g.findAircraft(b.cs);
     if (!ac) { this.build = null; return; }
-    const target = b.target || (ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.holdingPoints[ac.rwy]);
+    const target = b.target || (ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.departureHold(ac));
     const r = target && GROUND.route(ac.taxiStartNode(), target, b.via);
     b.preview = r ? r.path : null;
     b.names = r ? r.names : [];
@@ -777,12 +784,24 @@ class GroundView {
       const v0 = R.v, half = R.width / 2;
       rect(R.u0 - 60, v0 - half - 7.5, R.u1 + 60, v0 + half + 7.5, C.rwyShoulder);
       rect(R.u0, v0 - half, R.u1, v0 + half, C.rwy);
-      for (const [e, inward] of [[R.u0, 1], [R.u1, -1]]) { // inward: u direction pointing into the runway
+      for (const [e, inward] of [[R.u0, 1], [R.u1, -1]]) { // pavement ends; inward: u direction into the runway
         // Blast pad with yellow chevrons beyond the end
         rect(e, v0 - half, e - inward * 60, v0 + half, '#30363a');
         for (let k = 0; k < 3; k++) {
           const tip = e - inward * (12 + k * 16);
           line([P(tip - inward * 14, v0 - half * 0.8), P(tip, v0), P(tip - inward * 14, v0 + half * 0.8)], C.yellow, 1.6);
+        }
+      }
+      for (const r of Object.values(RUNWAYS)) {
+        if (r.phys !== R.phys) continue;
+        const e = r.thrU, inward = r.dirU;
+        // Displaced threshold: white arrows down the centreline of the displaced pavement, and a threshold bar.
+        if (Math.abs(e - r.startU) > 5) {
+          for (let u = r.startU + inward * 40; (e - u) * inward > 30; u += inward * 60) {
+            line([P(u, v0), P(u + inward * 20, v0)], C.paint, 1.2);
+            line([P(u + inward * 12, v0 - 3), P(u + inward * 20, v0), P(u + inward * 12, v0 + 3)], C.paint, 1.2);
+          }
+          for (let w = -half + 2; w < half - 2; w += 4) line([P(e - inward * 6, v0 + w), P(e - inward * 3, v0 + w + 1.5), P(e - inward * 6, v0 + w + 3)], C.paint, 1);
         }
         // Threshold bar and piano keys (16 on a 60 m runway, 12 on 45 m)
         rect(e, v0 - half + 1, e + inward * 1.8, v0 + half - 1, C.paint);
@@ -912,7 +931,7 @@ class GroundView {
     // Mandatory instruction signs at the runway holding points (white on red) beside location signs
     for (const n of Object.values(N)) {
       if (n.kind !== 'hold') continue;
-      const rwys = Object.entries(GROUND.holdingPoints).filter(([, hp]) => hp === n.name).map(([rw]) => rw);
+      const rwys = GROUND.holdRunways(n.name);
       const ids = RUNWAY_PHYS.find((p) => p.phys === n.phys).ids;
       const text = rwys.length ? `${n.name} ${rwys[0]}` : n.name;
       if (rwys.length || big) {

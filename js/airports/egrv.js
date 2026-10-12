@@ -46,22 +46,23 @@ AIRPORTS.EGRV = {
     // VOR/DME beacons
     F('RVW', 1.5, -2.4, 'vor'); F('OKR', 27, 26, 'vor'); F('DXT', -24, -25, 'vor');
 
-    // ---- Approaches: an RNAV T-bar to the ILS for every runway end ----
+    // ---- Approaches: pre-made RNAV transitions to the ILS for every runway end (see approachSet in data.js) ----
     //   FAF  on the centreline at 6.3 nm, 2000 ft (on the 3° glideslope).
     //   IF   11 nm / 3000 ft for the south runways, 14 nm / 4000 ft for the north ones, so arrivals for the two
     //        parallels keep 1000 ft apart until established, and always join the glideslope from below.
-    //   IAFs 6 nm from the IF; the outer IAF on the side away from the parallel runway. South 4000 ft, north 5000 ft.
+    //   Straight-in IAF 6 nm behind the IF; base IAF and downwind on the side away from the parallel runway, with
+    //   arcs onto base and final. South 4000 ft, north 5000 ft.
     const NAMES = {
-      '26R': { outer: 'NORAX', straightIn: 'MAVEK', if: 'MELAN', faf: 'RIVOS' },
-      '26L': { outer: 'SUREK', straightIn: 'LUTOS', if: 'TOBEK', faf: 'LONKA' },
-      '08L': { outer: 'KELVO', straightIn: 'PELOR', if: 'PIRAM', faf: 'ODINA' },
-      '08R': { outer: 'ZUBIN', straightIn: 'HUBAN', if: 'HALOR', faf: 'ESKIN' },
+      '26R': { straightIn: 'MAVEK', if: 'MELAN', faf: 'RIVOS', side: { base: 'NORAX', dw: 'DOLVA', de: 'DE26R', bt: 'BT26R' } },
+      '26L': { straightIn: 'LUTOS', if: 'TOBEK', faf: 'LONKA', side: { base: 'SUREK', dw: 'SAVOK', de: 'DE26L', bt: 'BT26L' } },
+      '08L': { straightIn: 'PELOR', if: 'PIRAM', faf: 'ODINA', side: { base: 'KELVO', dw: 'KIRNA', de: 'DE08L', bt: 'BT08L' } },
+      '08R': { straightIn: 'HUBAN', if: 'HALOR', faf: 'ESKIN', side: { base: 'ZUBIN', dw: 'ZELOT', de: 'DE08R', bt: 'BT08R' } },
     };
     for (const [rwy, n] of Object.entries(NAMES)) {
       const r = RUNWAYS[rwy], north = r.phys === 'N';
-      tBar(rwy, n, {
-        ifAlong: north ? 14 : 11, ifAlt: north ? 4000 : 3000, iafAlt: north ? 5000 : 4000,
-        side: north === (r.heading === 260) ? 1 : -1, // +1 when the outer side is right of the final approach course
+      const side = north === (r.heading === 260) ? 1 : -1; // +1 when the outer side is right of the final approach course
+      approachSet(rwy, { ...n, sides: { [side]: n.side } }, {
+        ifAlong: north ? 14 : 11, ifAlt: north ? 4000 : 3000, iafAlt: north ? 5000 : 4000, primary: side,
       });
     }
 
@@ -72,8 +73,8 @@ AIRPORTS.EGRV = {
       addFix(name, Geo.offset(FIXES[a.straightIn], RUNWAYS[rwy].heading + 180 - 45 * a.side, 8), 'enroute');
     };
     feederFix('NURPA', '26R'); feederFix('GIBRA', '26L'); feederFix('ULMAR', '08L'); feederFix('KUTRA', '08R');
-    // Lead-in to the 08L outer IAF, on the extension of the IAF→IF leg.
-    addFix('RAXOL', Geo.offset(FIXES.KELVO, Geo.bearing(FIXES.PIRAM, FIXES.KELVO), 12), 'enroute');
+    // Lead-in to the 08L base IAF, on the extension of the base leg.
+    addFix('RAXOL', Geo.offset(FIXES.KELVO, Geo.bearing(FIXES.BT08L, FIXES.KELVO), 12), 'enroute');
 
     // SID first fixes: 4 nm beyond the departure end, splaying 15° away from the parallel runway.
     Object.assign(SID_FIRST, { '26R': 'ROKEL', '26L': 'SALMA', '08L': 'KORAN', '08R': 'LIPEX' });

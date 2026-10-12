@@ -166,11 +166,14 @@ class Aircraft {
   fixAlt(name) { return this.altCons?.[name] ?? FIXES[name]?.alt; }
 
   // Lateral navigation along the route: track each leg, start fly-by turns early so the aircraft rolls out on
-  // the next leg, and sequence a waypoint once it is passed abeam so a fix is never orbited.
+  // the next leg, and sequence a waypoint once it is passed abeam so a fix is never orbited. Legs published as arcs
+  // (RF legs on the approach transitions) are flown round their centre.
   followRoute(game) {
     const wp = FIXES[this.route[0]];
     // The leg starts at the fix just sequenced, or where the aircraft was when it got a new waypoint.
     if (!this.leg || this.leg.to !== this.route[0]) this.leg = { to: this.route[0], from: { x: this.x, y: this.y } };
+    const arc = this.leg.fromName && ARCS[`${this.leg.fromName}>${this.route[0]}`];
+    if (arc) return this.flyArc(arc, wp, game);
     const from = this.leg.from;
     const len = Geo.dist(from, wp);
     const d = Geo.dist(this, wp);
@@ -180,27 +183,14 @@ class Aircraft {
     const r = this.turnRadius();
 
     // Fly-by: lead = r·tan(Δ/2), at most 3 nm and 40% of the next leg; turns over 120° fly over the fix.
+    // An arc that follows starts tangent to this leg, so there is nothing to anticipate.
     let lead = 0.2;
     const next = this.route[1] && FIXES[this.route[1]];
-    if (next) {
+    if (next && !ARCS[`${this.route[0]}>${this.route[1]}`]) {
       const turn = Math.abs(Geo.diff(course, Geo.bearing(wp, next)));
       if (turn <= 120) lead = Geo.clamp(r * Math.tan(Geo.rad(turn / 2)), 0.2, Math.min(3, 0.4 * Geo.dist(wp, next)));
     }
-    if (d <= lead || (len > 0.1 && prog >= len)) {
-      this.route.shift();
-      if (this.route.length) {
-        this.leg = { to: this.route[0], from: { x: wp.x, y: wp.y } };
-        return this.followRoute(game);
-      }
-      this.leg = null;
-      this.mode = 'heading';
-      this.tgtHdg = this.hdg;
-      if (this.isArr && !this.ils && !this.endOfRouteWarned) {
-        this.endOfRouteWarned = true;
-        this.say(game, `end of route at ${wp.name}, maintaining heading ${Geo.fmtHdg(this.hdg)}, request approach clearance`);
-      }
-      return;
-    }
+    if (d <= lead || (len > 0.1 && prog >= len)) return this.sequence(wp, game);
 
     // Steer for a point ahead on the leg, so the aircraft converges on the track rather than chasing the fix.
     const look = Math.max(1.5, 1.5 * r);
@@ -215,6 +205,33 @@ class Aircraft {
     this.tgtHdg = this.headingFor(brg);
   }
 
+  // RF leg: fly round the arc's centre, steering back onto the radius, until abeam the end point.
+  flyArc(arc, wp, game) {
+    const sgn = arc.dir === 'R' ? 1 : -1;
+    const radial = Geo.bearing(arc.c, this);
+    const togo = sgn * Geo.diff(radial, Geo.bearing(arc.c, wp)); // degrees of arc still to fly
+    if (togo <= 0.5) return this.sequence(wp, game);
+    const err = Geo.dist(arc.c, this) - arc.r; // > 0 outside the arc
+    this.tgtHdg = this.headingFor(radial + sgn * 90 + sgn * Geo.clamp(err * 40, -40, 40));
+    this.turnDir = null;
+  }
+
+  // Waypoint passed: on to the next leg, or the end of the route.
+  sequence(wp, game) {
+    this.route.shift();
+    if (this.route.length) {
+      this.leg = { to: this.route[0], from: { x: wp.x, y: wp.y }, fromName: wp.name };
+      return this.followRoute(game);
+    }
+    this.leg = null;
+    this.mode = 'heading';
+    this.tgtHdg = this.hdg;
+    if (this.isArr && !this.ils && !this.endOfRouteWarned) {
+      this.endOfRouteWarned = true;
+      this.say(game, `end of route at ${wp.name}, maintaining heading ${Geo.fmtHdg(this.hdg)}, request approach clearance`);
+    }
+  }
+
   checkLocCapture(game) {
     const r = this.runway;
     const { along, lateral } = this.finalGeometry();
@@ -226,6 +243,8 @@ class Aircraft {
     // Flying the published approach: the localizer is joined from the IF on, not on the way to the IAF.
     const a = APPROACHES[this.rwy];
     if (this.app && this.mode === 'route' && this.route.length && this.route[0] !== a.if && this.route[0] !== a.faf) return;
+    // On the arc onto final the aircraft rolls out on the centreline by itself: join the localizer at the IF.
+    if (this.mode === 'route' && this.leg?.fromName && ARCS[`${this.leg.fromName}>${this.route[0]}`]) return;
     const toward = (lateral > 0 && theta < 0) || (lateral < 0 && theta > 0);
     const lead = this.turnRadius() * (1 - Math.cos(Geo.rad(theta))) + 0.15;
     if ((Math.abs(lateral) <= lead && (toward || Math.abs(lateral) < 0.15)) || crossed) {
@@ -421,11 +440,12 @@ class Aircraft {
     this.hold = null;
     this.tgtHdg = this.runway.heading;
     this.turnDir = null;
-    this.tgtAlt = Math.max(this.alt, 3000);
+    const gaAlt = AIRPORT.goAroundAlt || 3000;
+    this.tgtAlt = Math.max(this.alt, gaAlt);
     this.tgtSpd = null;
     this.prevLateral = null;
     this.gaTime = game.time;
-    this.say(game, `${reason}, runway heading, climbing 3000`);
+    this.say(game, `${reason}, runway heading, climbing ${gaAlt}`);
     game.onGoAround(this);
   }
 
@@ -440,7 +460,7 @@ class Aircraft {
       trail: [], endOfRouteWarned: true, calledDeparture: true, landClr: true,
     });
     if (!g.isArr && ['stand', 'pushback', 'taxi', 'ground', 'lineup'].includes(g.state)) {
-      Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.thr.x, y: g.runway.thr.y, hdg: g.runway.heading });
+      Object.assign(g, { state: 'takeoff', spd: 0, x: g.runway.start.x, y: g.runway.start.y, hdg: g.runway.heading });
       if (g.tgtAlt < AIRPORT.sidTop) g.tgtAlt = AIRPORT.sidTop;
     }
     const vectored = g.state === 'air' && g.mode === 'heading' && !g.ils;

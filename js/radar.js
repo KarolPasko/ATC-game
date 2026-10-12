@@ -230,14 +230,14 @@ class Radar {
     }
     if (ac.state === 'stand' && !ac.isArr) {
       if (!ac.cleared) items.push(['Cleared as filed', `${cs} caf`]);
-      else items.push([`Push back, face ${AIRPORT.pushDirs.E}`, `${cs} pb e`], [`Push back, face ${AIRPORT.pushDirs.W}`, `${cs} pb w`], [`Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
+      else items.push([`Push back, face ${AIRPORT.pushDirs.E}`, `${cs} pb e`], [`Push back, face ${AIRPORT.pushDirs.W}`, `${cs} pb w`], [`Taxi to ${GROUND.departureHold(ac)}`, `${cs} taxi`]);
     }
     if (ac.state === 'ground') items.push([`Line up runway ${ac.rwy}`, `${cs} lu`], [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
     if (ac.state === 'lineup') items.push(ac.ctoPending ? ['Already cleared for take-off', ''] : [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
     if (ac.state === 'taxi') {
       if (ac.crossStop() >= 0) items.push([`Cross runway ${GROUND.runwayName(GROUND.nodes[ac.taxiPath[ac.crossStop()]].phys, g)}`, `${cs} cross`]);
       if (ac.taxiPath.length) items.push(ac.holdPos ? ['Continue taxi', `${cs} cont`] : ['Hold position', `${cs} hpos`]);
-      else items.push([ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, `${cs} taxi`]);
+      else items.push([ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.departureHold(ac)}`, `${cs} taxi`]);
     }
     if (ac.isArr && ac.airborne && ac.ils && !ac.landClr) items.push([`Cleared to land ${ac.rwy}`, `${cs} cl`]);
     if (ac.isArr && ac.airborne) items.push(['Go around', `${cs} ga`]);
@@ -251,7 +251,7 @@ class Radar {
     const cs = ac.cs, items = [];
     const canTaxi = ['stand', 'pushback', 'taxi', 'ground'].includes(ac.state);
     if (n.kind === 'hold' && !ac.isArr && canTaxi) {
-      const rwys = Object.entries(GROUND.holdingPoints).filter(([, hp]) => hp === n.name).map(([r]) => r);
+      const rwys = GROUND.holdRunways(n.name);
       if (rwys.includes(ac.rwy)) {
         items.push([`Taxi to holding point ${n.name} (runway ${ac.rwy})`, `${cs} taxi ${n.name}`]);
       } else if (rwys.length && RUNWAYS[rwys[0]].heading === ac.runway.heading) {
@@ -380,8 +380,7 @@ class Radar {
   drawProcedures() {
     const pr = PROCS[this.game.config];
     for (const s of pr.stars) {
-      const fixes = [s.fixes[0], ...starRoute(s)].map((n) => FIXES[n]);
-      this.polyline(fixes.concat([RUNWAYS[s.rwy].thr]), COLORS.arr, 1, [6, 4], 0.25);
+      this.polyline(routePoints([s.fixes[0], ...starRoute(s)]).concat([RUNWAYS[s.rwy].thr]), COLORS.arr, 1, [6, 4], 0.25);
     }
     for (const s of pr.sids) {
       const r = RUNWAYS[s.rwy];
@@ -394,7 +393,7 @@ class Radar {
     for (const id of this.game.arrivalRunways()) {
       const r = RUNWAYS[id];
       const a = APPROACHES[id];
-      const far = approachPoint(id, a.ifAlong + 6);
+      const far = approachPoint(id, Geo.dist(FIXES[a.straightIn], r.thr));
       this.polyline([r.thr, far], COLORS.centreline, 1, [4, 4]);
       // nm ticks, longer every 5 nm
       for (let d = 1; d <= Math.floor(a.ifAlong); d++) {
@@ -402,10 +401,13 @@ class Radar {
         const len = d % 5 === 0 ? 0.6 : 0.25;
         this.polyline([Geo.offset(p, r.heading + 90, len), Geo.offset(p, r.heading - 90, len)], COLORS.centreline, 1);
       }
-      // T-bar: outer IAF -> IF, straight-in IAF -> IF -> FAF
-      this.polyline([FIXES[a.outer], FIXES[a.if]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
-      if (a.outer2) this.polyline([FIXES[a.outer2], FIXES[a.if]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
-      this.polyline([FIXES[a.straightIn], FIXES[a.if], FIXES[a.faf]], 'rgba(200,170,255,0.3)', 1, [2, 4]);
+      // Approach transitions: straight-in, and per side the downwind and base legs with their arcs onto final.
+      const col = 'rgba(200,170,255,0.3)';
+      this.polyline([FIXES[a.straightIn], FIXES[a.if], FIXES[a.faf]], col, 1, [2, 4]);
+      for (const n of Object.values(a.sides)) {
+        this.polyline(routePoints(a.paths[n.dw].slice(0, -1)), col, 1, [2, 4]);
+        this.polyline([FIXES[n.base], FIXES[n.bt]], col, 1, [2, 4]);
+      }
     }
     ctx.setLineDash([]);
   }
@@ -416,7 +418,7 @@ class Radar {
     for (const r of Object.values(RUNWAYS)) {
       if (!done.has(r.phys)) {
         done.add(r.phys);
-        const a = this.toScreen(r.thr), b = this.toScreen(r.opp);
+        const a = this.toScreen(r.start), b = this.toScreen(r.opp);
         ctx.strokeStyle = COLORS.runway;
         ctx.lineWidth = Math.max(2, 0.03 * this.view.scale);
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
@@ -447,7 +449,8 @@ class Radar {
     for (const f of Object.values(FIXES)) {
       const p = this.toScreen(f);
       if (p.x < -40 || p.y < -40 || p.x > this.w + 40 || p.y > this.h + 40) continue;
-      const procFix = ['iaf', 'if', 'faf', 'sid'].includes(f.type);
+      if (f.type === 'tp' && !(onRoute.has(f.name) && s >= 8)) continue; // arc points of the approach transitions
+      const procFix = ['iaf', 'if', 'faf', 'sid', 'tp'].includes(f.type);
       if (procFix && !active.has(f.name) && !onRoute.has(f.name)) continue;
       if ((f.type === 'faf' || f.type === 'sid') && s < 10 && !onRoute.has(f.name)) continue;
       const prio = onRoute.has(f.name) ? 5 : procFix ? 4 : f.type === 'entry' || f.type === 'exit' ? 3 : f.type === 'vor' ? 2 : 1;
@@ -514,12 +517,12 @@ class Radar {
     const col = ac.isArr ? COLORS.arr : COLORS.dep;
     const w = selected ? 2.2 : 1.2;
     const alpha = selected ? 1 : 0.55;
-    if (ac.state === 'ground' || ac.state === 'lineup') this.polyline([ac.runway.thr, ac.runway.opp], col, w, [], alpha);
+    if (ac.state === 'ground' || ac.state === 'lineup') this.polyline([ac.runway.start, ac.runway.opp], col, w, [], alpha);
     if (vectored) {
       // Curved prediction of the turn onto the assigned heading, then the route it will rejoin.
       this.polyline(pts, col, w, [6, 4], alpha);
       if (ac.route.length) {
-        const rest = ac.route.map((n) => FIXES[n]);
+        const rest = routePoints(ac.route);
         if (ac.isArr) rest.push(ac.runway.thr);
         this.polyline(rest, col, w * 0.8, [], alpha * 0.45);
       }

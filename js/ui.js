@@ -348,7 +348,7 @@ class UI {
         if (!ac.isArr && !ac.cleared) quick += btn('CAF', 'caf');
         if (ac.state === 'stand' && !ac.isArr) quick += btn(`Push, face ${AIRPORT.pushDirs.E}`, 'pb e') + btn(`Push, face ${AIRPORT.pushDirs.W}`, 'pb w');
         if (ac.state === 'taxi' && ac.crossStop() >= 0) quick += btn(`Cross ${GROUND.runwayName(GROUND.nodes[ac.taxiPath[ac.crossStop()]].phys, this.game)}`, 'cross');
-        if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.holdingPoints[ac.rwy]}`, 'taxi') + btn('Taxi…', 'taxi ');
+        if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.departureHold(ac)}`, 'taxi') + btn('Taxi…', 'taxi ');
         if (ac.state === 'taxi' && ac.taxiPath.length) quick += ac.holdPos ? btn('Continue', 'cont') : btn('Hold position', 'hpos');
         if (!ac.isArr && ac.owner === 'GND' && this.game.position === 'GND') quick += btn('Contact Tower', 'ho');
         if (this.game.viewMode !== 'ground') quick += btn('Ground chart', '.gnd');

@@ -200,7 +200,8 @@ class CommandProcessor {
         if (cmd === 'APP') {
           if (ac.est) return `cleared ILS approach runway ${rwy}, established`;
           const entry = this.assignApproach(ac, rwy, via);
-          return `cleared ILS approach runway ${rwy} via ${entry}`;
+          const how = describeEntry(rwy, entry);
+          return `cleared ILS approach runway ${rwy} via ${entry}${how !== entry && !how.startsWith('the ') ? ` (${how})` : ''}`;
         }
         return `cleared ILS runway ${rwy}`;
       }
@@ -295,21 +296,21 @@ class CommandProcessor {
         let target = this.optional(cur, (t) => {
           if (GROUND.nodes[t]?.kind === 'hold') return t;
           const rw = parseRunway(t);
-          if (rw && !ac.isArr) return GROUND.holdingPoints[rw];
+          if (rw && !ac.isArr) return rw === ac.rwy ? GROUND.departureHold(ac) : GROUND.holdingPoints[rw];
           const m = t.match(/^(?:S|ST|STAND)?(\d{1,2})$/);
           if (m && GROUND.stands[+m[1]]) return `ST${+m[1]}`;
           return null;
         });
-        if (!target) target = ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.holdingPoints[ac.rwy];
+        if (!target) target = ac.isArr ? (ac.stand ? `ST${ac.stand}` : null) : GROUND.departureHold(ac);
         if (!target) return 'say again taxi instructions?';
         // Taxiing to the other parallel runway's holding point: switch runway if a matching departure exists.
-        const newRwy = !ac.isArr && Object.keys(GROUND.holdingPoints).find((r) => GROUND.holdingPoints[r] === target && RUNWAYS[r].heading === ac.runway.heading);
+        const newRwy = !ac.isArr && !GROUND.depHolds[ac.rwy]?.includes(target) && GROUND.holdRunways(target).find((r) => RUNWAYS[r].heading === ac.runway.heading);
         if (newRwy && newRwy !== ac.rwy) {
           const exit = ac.route[ac.route.length - 1];
-          const sid = [PROCS[g.config], ...Object.values(PROCS)].flatMap((p) => p.sids).find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit);
+          const sid = [PROCS[g.config], ...Object.values(PROCS)].flatMap((p) => p.sids).find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit && sidAllowed(p, ac.type));
           if (!sid) return `unable, no ${exit} departure from runway ${newRwy}`;
           Object.assign(ac, { rwy: newRwy, sid: sid.name, route: sid.fixes.slice() });
-        } else if (!ac.isArr && GROUND.nodes[target]?.kind === 'hold' && !newRwy && Object.values(GROUND.holdingPoints).includes(target)) {
+        } else if (!ac.isArr && GROUND.nodes[target]?.kind === 'hold' && !newRwy && GROUND.holdRunways(target).length && !GROUND.depHolds[ac.rwy]?.includes(target)) {
           return `unable, holding point ${target} is not for our departure runway`;
         }
         if (target.startsWith('ST')) {
@@ -323,7 +324,7 @@ class CommandProcessor {
         const r = ac.startTaxi(target, via);
         if (!r) return 'unable, no taxi route';
         const names = r.names.filter((n, i) => !(i === r.names.length - 1 && n === target));
-        const isRwyHp = Object.values(GROUND.holdingPoints).includes(target);
+        const isRwyHp = GROUND.holdRunways(target).length > 0;
         const dest = target.startsWith('ST') ? `stand ${ac.stand}` : isRwyHp ? `holding point ${target}, runway ${ac.rwy}` : `holding point ${target}`;
         return `${ac.state === 'pushback' ? 'pushback and ' : ''}taxi to ${dest}${names.length ? ' via ' + names.join(', ') : ''}`;
       }
@@ -427,24 +428,9 @@ class CommandProcessor {
     return k < 0 ? null : route.slice(0, k).concat(approachFrom(rwy, route[k]));
   }
 
-  // Approach entries in order of preference from where the aircraft is: the straight-in IAF from behind the
-  // final, the outer IAF from the outer side, the IF from abeam or inside the T, the FAF when already close in.
+  // Approach entries in order of preference from where the aircraft is (see transitionFor): never across the airport.
   entryCandidates(ac, rwy) {
-    const a = APPROACHES[rwy];
-    const { along, lateral } = ac.finalGeometry(RUNWAYS[rwy]);
-    // With an outer IAF on both sides, use the one on the aircraft's side.
-    const second = a.outer2 && lateral * a.side < 0;
-    const o = second ? a.outer2 : a.outer, other = second ? a.outer : a.outer2;
-    const outer = lateral * a.side * (second ? -1 : 1); // positive on that outer IAF's side
-    const cone = (from) => along > from + 1 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - from);
-    const A = a.ifAlong;
-    let list;
-    if (cone(A + 6)) list = [a.straightIn, a.if, o, a.faf];
-    else if (cone(A)) list = [a.if, a.straightIn, o, a.faf];
-    else if (along >= A - 2) list = outer >= 4 ? [o, a.if, a.straightIn, a.faf] : [a.if, o, a.straightIn, a.faf];
-    else if (along >= 8.8 && Math.abs(lateral) <= Math.tan(Geo.rad(60)) * (along - 6.3)) list = [a.faf, a.if, o, a.straightIn];
-    else list = outer > 0 ? [o, a.if, a.faf, a.straightIn] : [a.if, o, a.faf, a.straightIn];
-    return other ? list.concat(other) : list;
+    return transitionFor(rwy, ac);
   }
 
   // Fly a silent copy of the aircraft along `route` with the approach clearance: does it get established

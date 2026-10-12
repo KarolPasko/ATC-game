@@ -20,17 +20,19 @@ function addFix(name, p, type, alt) {
 }
 
 // Runways from the airport's runway-aligned ground frame (metres): u along `axis`, v to its left.
-// Each physical runway lies at `v` from u0 to u1; ids[0] is flown towards +u (threshold at u0), ids[1] the other way.
+// Each physical runway's pavement lies at `v` from u0 to u1; ids[0] is flown towards +u (starting at u0), ids[1] the
+// other way. disp0 / disp1: landing thresholds displaced from the pavement ends (take-offs still use the full length).
+// thr = landing threshold, start = start of the take-off run, opp = far end of the pavement.
 function defineRunways(axis, list) {
   const U = Geo.vec(axis), V = Geo.vec(axis - 90);
   const w = (u, v) => ({ x: (U.x * u + V.x * v) / 1852, y: (U.y * u + V.y * v) / 1852 });
   for (const p of list) {
     const [lo, hi] = p.ids;
-    const a = w(p.u0, p.v), b = w(p.u1, p.v);
+    const d0 = p.disp0 || 0, d1 = p.disp1 || 0;
     RUNWAY_PHYS.push({ ...p });
     const common = { phys: p.phys, v: p.v, width: p.width, ils: p.ils !== false };
-    RUNWAYS[lo] = { id: lo, heading: Geo.norm(axis), thr: a, opp: b, recip: hi, dirU: 1, thrU: p.u0, endU: p.u1, ...common };
-    RUNWAYS[hi] = { id: hi, heading: Geo.norm(axis + 180), thr: b, opp: a, recip: lo, dirU: -1, thrU: p.u1, endU: p.u0, ...common };
+    RUNWAYS[lo] = { id: lo, heading: Geo.norm(axis), thr: w(p.u0 + d0, p.v), start: w(p.u0, p.v), opp: w(p.u1, p.v), recip: hi, dirU: 1, thrU: p.u0 + d0, startU: p.u0, endU: p.u1, ...common };
+    RUNWAYS[hi] = { id: hi, heading: Geo.norm(axis + 180), thr: w(p.u1 - d1, p.v), start: w(p.u1, p.v), opp: w(p.u0, p.v), recip: lo, dirU: -1, thrU: p.u1 - d1, startU: p.u1, endU: p.u0, ...common };
   }
 }
 
@@ -42,45 +44,133 @@ function approachPoint(rwyId, along, lateral = 0) {
   return Geo.offset(p, r.heading + 90, lateral);
 }
 
-// RNAV "T-bar" to the ILS: FAF and IF on the centreline, a straight-in IAF `wing` nm behind the IF and an outer IAF
-// `wing` nm abeam the IF (side +1 = right of the final approach course), so the turn at the IF is 90°.
-// `names.outer2` adds a second outer IAF on the other side.
-function tBar(rwy, names, { ifAlong, ifAlt, iafAlt, side, fafAlong = 6.3, fafAlt = 2000, wing = 6 }) {
-  const n = names;
-  addFix(n.faf, approachPoint(rwy, fafAlong), 'faf', fafAlt);
-  addFix(n.if, approachPoint(rwy, ifAlong), 'if', ifAlt);
-  addFix(n.outer, approachPoint(rwy, ifAlong, wing * side), 'iaf', iafAlt);
-  if (n.outer2) addFix(n.outer2, approachPoint(rwy, ifAlong, -wing * side), 'iaf', iafAlt);
-  addFix(n.straightIn, approachPoint(rwy, ifAlong + wing), 'iaf', iafAlt);
+// ---- Pre-made RNAV transitions to the ILS ----
+// Every transition ends exactly on the extended centreline at the IF, heading down the final approach course, so the
+// aircraft rolls out aligned with the runway. Turns onto base and onto final are constant-radius arcs (RF legs), so the
+// path is smooth and never cuts across the airport. In runway-relative terms (along = nm before the threshold, side +1 =
+// right of the final approach course, A = IF distance, L = `wide`, r = `rFinal`):
+//   straight-in  IA (A + 6, 0) ─ IF          (distance configurable)
+//   base         B (A + r, L) ─ BT (A + r, r) ⌒ IF
+//   downwind     DW (dwAlong, L) ─ DE (A + r - (L - r), L) ⌒ BT ⌒ IF
+// then IF ─ FAF ─ threshold on the localizer.
+const ARCS = {}; // "FROM>TO" -> { c: centre, r: radius (nm), dir: 'L' | 'R' }
+function addArc(from, to, c) {
+  const A = FIXES[from], B = FIXES[to];
+  const cross = (A.x - c.x) * (B.y - c.y) - (A.y - c.y) * (B.x - c.x); // > 0: anticlockwise, a left turn
+  ARCS[`${from}>${to}`] = { c, r: Geo.dist(c, A), dir: cross > 0 ? 'L' : 'R' };
+}
+// Points along a route for drawing, with arcs expanded (names: fix names, optionally starting from point `from`).
+function routePoints(names, from = null) {
+  const pts = from ? [from] : [];
+  names.forEach((n, i) => {
+    const arc = i > 0 && ARCS[`${names[i - 1]}>${n}`];
+    if (arc) {
+      const a0 = Geo.bearing(arc.c, FIXES[names[i - 1]]), a1 = Geo.bearing(arc.c, FIXES[n]);
+      const sweep = arc.dir === 'R' ? (a1 - a0 + 360) % 360 : -((a0 - a1 + 360) % 360);
+      for (let k = 1; k < 12; k++) pts.push(Geo.offset(arc.c, a0 + (sweep * k) / 12, arc.r));
+    }
+    pts.push(FIXES[n]);
+  });
+  return pts;
+}
+
+// names: { faf, if, straightIn, sides: { 1: { base, bt, dw, de }, -1: {...} } } (sides present are flown).
+function approachSet(rwy, names, { ifAlong, ifAlt, iafAlt, dwAlt = iafAlt, fafAlong = 6.3, fafAlt = 2000, wide = 6, rFinal = 2.5, dwAlong = 1, primary = 1, straightIn = 6, straightInAlt = iafAlt }) {
+  const A = ifAlong, L = wide, r = rFinal, rd = L - r;
+  const P = (along, lateral) => approachPoint(rwy, along, lateral);
+  const btAlt = Math.round((iafAlt + ifAlt) / 2 / 500) * 500;
+  addFix(names.faf, P(fafAlong, 0), 'faf', fafAlt);
+  addFix(names.if, P(A, 0), 'if', ifAlt);
+  addFix(names.straightIn, P(A + straightIn, 0), 'iaf', straightInAlt);
+  const paths = { [names.faf]: [names.faf], [names.if]: [names.if, names.faf], [names.straightIn]: [names.straightIn, names.if, names.faf] };
+  const sides = {};
+  for (const [k, n] of Object.entries(names.sides)) {
+    const s = +k;
+    addFix(n.base, P(A + r, s * L), 'iaf', iafAlt);
+    addFix(n.bt, P(A + r, s * r), 'tp', btAlt);
+    addFix(n.dw, P(dwAlong, s * L), 'iaf', dwAlt);
+    addFix(n.de, P(A + r - rd, s * L), 'tp', iafAlt);
+    addArc(n.de, n.bt, P(A + r - rd, s * r));
+    addArc(n.bt, names.if, P(A, s * r));
+    paths[n.bt] = [n.bt, names.if, names.faf];
+    paths[n.base] = [n.base, ...paths[n.bt]];
+    paths[n.de] = [n.de, ...paths[n.bt]];
+    paths[n.dw] = [n.dw, ...paths[n.de]];
+    sides[s] = { ...n };
+  }
+  const main = sides[primary] || Object.values(sides)[0];
+  const other = Object.entries(sides).find(([s]) => +s !== primary)?.[1];
   APPROACHES[rwy] = {
-    rwy, iafs: [n.outer, n.straightIn, n.outer2].filter(Boolean), outer: n.outer, outer2: n.outer2 || null,
-    straightIn: n.straightIn, if: n.if, faf: n.faf, ifAlong, side,
+    rwy, if: names.if, faf: names.faf, straightIn: names.straightIn, ifAlong: A, side: sides[primary] ? primary : +Object.keys(sides)[0],
+    sides, paths, outer: main.base, outer2: other?.base || null,
+    iafs: [names.straightIn, ...Object.values(sides).flatMap((n) => [n.base, n.dw])],
   };
 }
 
-// Published holds at the IAFs: an outer IAF's inbound course leads straight on to the IF with the racetrack on the
-// far side from the airport; the straight-in IAF's is the final approach course, turning towards the outer side.
+// Published holds at the approach entry points: the straight-in IAF on the final approach course, the base IAFs
+// inbound along the base leg, the downwind fixes along the downwind; racetracks on the side away from the airport.
 function iafHolds() {
+  const turnToward = (inbound, side) => (Geo.diff(inbound, side) > 0 ? 'R' : 'L');
   for (const a of Object.values(APPROACHES)) {
     const r = RUNWAYS[a.rwy];
-    const outerHold = (fix, side) => ({ inbound: Math.round(Geo.bearing(FIXES[fix], FIXES[a.if])), turn: side > 0 ? 'L' : 'R', minAlt: FIXES[fix].alt });
-    HOLDS[a.outer] = outerHold(a.outer, a.side);
-    if (a.outer2) HOLDS[a.outer2] = outerHold(a.outer2, -a.side);
-    HOLDS[a.straightIn] = { inbound: r.heading, turn: a.side > 0 ? 'R' : 'L', minAlt: FIXES[a.straightIn].alt };
+    HOLDS[a.straightIn] = { inbound: r.heading, turn: turnToward(r.heading, r.heading + 90 * a.side), minAlt: FIXES[a.straightIn].alt };
+    for (const [k, n] of Object.entries(a.sides)) {
+      const s = +k;
+      const base = Math.round(Geo.bearing(FIXES[n.base], FIXES[n.bt]));
+      HOLDS[n.base] = { inbound: base, turn: turnToward(base, r.heading + 180), minAlt: FIXES[n.base].alt };
+      const dw = Geo.norm(r.heading + 180);
+      HOLDS[n.dw] = { inbound: dw, turn: turnToward(dw, r.heading + 90 * s), minAlt: FIXES[n.dw].alt };
+    }
   }
 }
 
-// The approach fixes from `fix` (an IAF, the IF or the FAF of that runway) down to the FAF, or null.
+// The approach fixes from `fix` (an entry point of that runway's transitions, the IF or the FAF) down to the FAF, or null.
 function approachFrom(rwy, fix) {
-  const a = APPROACHES[rwy];
-  if (!a) return null;
-  if (fix === a.faf) return [a.faf];
-  if (fix === a.if) return [a.if, a.faf];
-  return a.iafs.includes(fix) ? [fix, a.if, a.faf] : null;
+  const p = APPROACHES[rwy]?.paths[fix];
+  return p ? p.slice() : null;
 }
 // Which runway's approach a fix belongs to (null for other fixes).
 function approachOf(fix) {
-  return Object.values(APPROACHES).find((a) => a.iafs.includes(fix) || a.if === fix || a.faf === fix) || null;
+  return Object.values(APPROACHES).find((a) => a.paths[fix]) || null;
+}
+
+// Plain-language name of an approach entry, e.g. "downwind north-west", "base south-east", "straight-in".
+function describeEntry(rwy, fix) {
+  const a = APPROACHES[rwy];
+  if (!a) return fix;
+  if (fix === a.straightIn) return 'straight-in';
+  if (fix === a.if) return 'the IF';
+  if (fix === a.faf) return 'the FAF';
+  const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  for (const [k, n] of Object.entries(a.sides)) {
+    const dir = COMPASS[Math.round(Geo.norm(RUNWAYS[rwy].heading + 90 * k) / 45) % 8];
+    if (fix === n.base || fix === n.bt) return `base ${dir}`;
+    if (fix === n.dw || fix === n.de) return `downwind ${dir}`;
+  }
+  return fix;
+}
+
+// Approach entries for an aircraft at point p, best first. Behind the final: straight-in (or the IF / FAF when already
+// lined up with it). On a side with transitions: base when abeam or beyond the IF, downwind when abeam the runway or
+// beyond the threshold (joined at its start, or at its end when already on it). On a side without transitions (the
+// parallel runway's side): out to the straight-in IAF. No entry ever takes the aircraft across the airport.
+function transitionFor(rwy, p) {
+  const a = APPROACHES[rwy], r = RUNWAYS[rwy];
+  const dx = p.x - r.thr.x, dy = p.y - r.thr.y, v = Geo.vec(r.heading);
+  const along = -(dx * v.x + dy * v.y), lateral = dx * v.y - dy * v.x;
+  const A = a.ifAlong, fafAlong = Geo.dist(FIXES[a.faf], r.thr);
+  const cone = (from, deg) => along > from + 1 && Math.abs(lateral) <= Math.tan(Geo.rad(deg)) * (along - from);
+  const s = Math.abs(lateral) < 1 || !a.sides[Math.sign(lateral)] ? a.side : Math.sign(lateral);
+  const n = a.sides[s];
+  const sameSide = Math.abs(lateral) < 1 || Math.sign(lateral) === s;
+  if (cone(Geo.dist(FIXES[a.straightIn], r.thr), 50)) return [a.straightIn, a.if, n.base];
+  if (cone(A, 45)) return [a.if, a.straightIn, n.base];
+  if (along < A + 1 && cone(fafAlong + 1.5, 35)) return [a.faf, a.if, n.base];
+  // Wrong side: well beyond the departure end, cross behind the runway to the downwind; otherwise out to the straight-in.
+  if (!sameSide) return along < -Geo.dist(r.thr, r.opp) - 6 ? [n.dw, a.straightIn] : [a.straightIn, n.base];
+  if (along >= A - 1) return Math.abs(lateral) < 4.5 && along > A + 3 ? [n.bt, n.base, a.straightIn] : [n.base, n.bt, a.straightIn];
+  if (along >= 3 && Math.abs(lateral) > 3) return [n.de, n.dw, n.base];
+  return [n.dw, n.de, n.base];
 }
 
 // Full lateral route of a STAR: its fixes after the entry, then the approach from its IAF.
@@ -109,8 +199,8 @@ const TYPES = {
   B38M: { wake: 'M', vapp: 143, vr: 148, max: 340, climb: 2600, desc: 2200, turn: 3 },
   E190: { wake: 'M', vapp: 130, vr: 135, max: 320, climb: 2800, desc: 2200, turn: 3 },
   E195: { wake: 'M', vapp: 132, vr: 138, max: 320, climb: 2600, desc: 2200, turn: 3 },
-  DH8D: { wake: 'M', vapp: 120, vr: 115, max: 280, climb: 1800, desc: 1800, turn: 3 },
-  AT76: { wake: 'M', vapp: 112, vr: 110, max: 250, climb: 1500, desc: 1600, turn: 3 },
+  DH8D: { wake: 'M', vapp: 120, vr: 115, max: 280, climb: 1800, desc: 1800, turn: 3, prop: true },
+  AT76: { wake: 'M', vapp: 112, vr: 110, max: 250, climb: 1500, desc: 1600, turn: 3, prop: true },
   A333: { wake: 'H', vapp: 140, vr: 155, max: 330, climb: 2000, desc: 2000, turn: 2.5 },
   A359: { wake: 'H', vapp: 145, vr: 155, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
   B789: { wake: 'H', vapp: 147, vr: 160, max: 340, climb: 2200, desc: 2000, turn: 2.5 },
@@ -118,6 +208,12 @@ const TYPES = {
   B744: { wake: 'H', vapp: 155, vr: 165, max: 340, climb: 1800, desc: 2000, turn: 2.5 },
 };
 const TYPE_WEIGHTS = Object.keys(TYPES);
+
+// Some SIDs are for jets only or propeller aircraft only (e.g. SANBA and LISTO off Manchester's 23s).
+function sidAllowed(sid, type) {
+  if (!sid.only) return true;
+  return (sid.only === 'prop') === !!TYPES[type]?.prop;
+}
 
 // Operators with their radio telephony callsigns, typical fleets and how common they are.
 const AIRLINES = [

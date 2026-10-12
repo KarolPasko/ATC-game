@@ -59,6 +59,12 @@ Object.assign(Radar.prototype, {
         ctx.strokeStyle = MAP_COLORS.townLine; ctx.lineWidth = 1; ctx.stroke();
         if (s >= 5) { const p = this.toScreen(t.label); ctx.fillStyle = MAP_COLORS.townLabel; ctx.textAlign = 'center'; ctx.fillText(t.name, p.x, p.y + 3); ctx.textAlign = 'left'; }
       }
+      for (const r of M.vrps || []) { // VFR reporting points: small filled triangles
+        const p = this.toScreen(r.p);
+        ctx.fillStyle = MAP_COLORS.field;
+        ctx.beginPath(); ctx.moveTo(p.x, p.y - 4); ctx.lineTo(p.x + 3.5, p.y + 2.5); ctx.lineTo(p.x - 3.5, p.y + 2.5); ctx.closePath(); ctx.fill();
+        if (s >= 7) ctx.fillText(r.name, p.x + 6, p.y + 3);
+      }
       for (const a of M.airfields) {
         const p = this.toScreen(a.p), v = Geo.vec(a.hdg);
         ctx.strokeStyle = MAP_COLORS.field; ctx.lineWidth = 1;
@@ -240,8 +246,11 @@ Object.assign(Radar.prototype, {
       if (next && g.position !== 'ALL') items.push([`Transfer to ${POSITIONS[next].short}`, `${cs} ho`]);
       if (g.position === 'ALL' && !ac.isArr && !ac.handedOff) items.push(['Transfer to Control', `${cs} ho`]);
       if (ac.isArr) {
-        for (const rwy of g.activeRunways()) {
-          items.push([`Cleared approach ${rwy}`, `${cs} app ${rwy}`]);
+        for (const rwy of g.arrivalRunways()) {
+          const a = APPROACHES[rwy];
+          items.push([`Approach ${rwy} · best entry`, `${cs} app ${rwy}`]);
+          // Pre-made transitions: each one joins the final at the IF, lined up with the runway.
+          for (const fix of a.iafs) items.push([`  ${rwy} via ${fix} · ${describeEntry(rwy, fix)}`, `${cs} app ${rwy} via ${fix}`, 'fix']);
           items.push([`Cleared ILS ${rwy} (vectors)`, `${cs} i ${rwy}`]);
         }
         if (ac.owner === 'TWR' && ac.ils && !ac.landClr) items.push([`Cleared to land ${ac.rwy}`, `${cs} cl`]);

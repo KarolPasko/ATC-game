@@ -52,7 +52,7 @@ class AIController {
   // Combined position: the player is both, so frequency changes happen silently.
   combinedTransfers(ac) {
     const g = this.game;
-    if (!ac.isArr && ac.airborne && ac.owner === 'TWR' && ac.alt >= 1500) g.transfer(ac, 'APP', { silent: true });
+    if (!ac.isArr && ac.airborne && ac.owner === 'TWR' && ac.alt >= (AIRPORT.twrHandoffAlt || 1500)) g.transfer(ac, 'APP', { silent: true });
     if (ac.isArr && ac.est && ac.owner === 'APP') g.transfer(ac, 'TWR', { silent: true });
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 6) {
       ac.landClr = true;
@@ -72,8 +72,7 @@ class AIController {
   // ---------- AI tower ----------
   tower(ac) {
     const g = this.game;
-    if (ac.isArr && ac.state === 'taxi') return; // vacating: handed to Ground automatically once clear
-    if (ac.state === 'taxi') { if (ac.holdShort && this.canCross(ac)) this.cmd(ac, 'cross'); return; }
+    if (ac.state === 'taxi') { if (ac.holdShort && this.canCross(ac)) this.crossGroup(ac); return; } // arrivals vacating: to Ground once clear
     const go = () => { this.cmd(ac, 'cto'); this.lastTakeoff[ac.runway.phys] = { t: g.time, heavy: ac.wake === 'H' }; };
     if (ac.state === 'ground' && ac.cleared) {
       if (this.canTakeoff(ac) && this.canLineUp(ac)) go();
@@ -81,7 +80,7 @@ class AIController {
       return;
     }
     if (ac.state === 'lineup' && !ac.ctoPending && this.canTakeoff(ac)) { go(); return; }
-    if (!ac.isArr && ac.airborne && ac.alt >= 1500) { this.cmd(ac, 'ho'); return; }
+    if (!ac.isArr && ac.airborne && ac.alt >= (AIRPORT.twrHandoffAlt || 1500)) { this.cmd(ac, 'ho'); return; }
     if (ac.isArr && ac.est && !ac.landClr && ac.finalGeometry().along < 8) this.cmd(ac, 'cl');
   }
 
@@ -124,6 +123,23 @@ class AIController {
       (!o.isArr && o.airborne && o.alt < 1000)))));
   }
 
+  // Cross the aircraft holding short, and the ones queued right behind it for the same crossing when there is time
+  // (next arrival 4 nm or more), as one group: "cross runway 23R behind the preceding".
+  crossGroup(ac) {
+    const g = this.game, rn = ac.taxiPath[0];
+    this.cmd(ac, 'cross');
+    if (this.nextArrival(ac, GROUND.nodes[rn].phys) < 4) return;
+    const queue = g.aircraft.filter((o) => o !== ac && o.state === 'taxi' && !o.crossClr && o.taxiPath?.includes(rn) &&
+      Geo.dist(o, GROUND.nodes[ac.holdShort || ac.gnode]) * GROUND.M_PER_NM < 260);
+    for (const o of queue.slice(0, 2)) {
+      if (o.owner === 'GND') { // Ground passes the ones behind straight to Tower
+        if (g.position !== 'ALL') g.log(`${AIRPORT.city} Ground: ${o.cs}, contact Tower ${POSITIONS.TWR.freq}`, g.userOwns(o) ? 'sys' : 'ai');
+        g.transfer(o, 'TWR', { ai: true, silent: true });
+      }
+      if (o.owner === 'TWR') this.cmd(o, 'cross');
+    }
+  }
+
   // Runway crossing: next arrival at least 3 nm out, nobody taking off, lining up to go or rolling out towards
   // the crossing point.
   canCross(ac) {
@@ -135,9 +151,7 @@ class AIController {
     const beyond = ac.taxiPath.slice(k, k + 2).map((m) => GROUND.nodes[m]).filter(Boolean);
     const near = (o) => beyond.some((b) => Geo.dist(o, b) * GROUND.M_PER_NM < 90);
     if (g.aircraft.some((o) => o !== ac && o.onGround() && o.state !== 'landed' && near(o))) return false;
-    return !g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (
-      o.state === 'takeoff' || (o.state === 'lineup' && (o.lining || o.ctoPending)) || (!o.isArr && o.airborne && o.alt < 300) ||
-      ((o.state === 'landed' || (o.state === 'taxi' && o.vacating)) && (n.u - toLocal(o).u) * o.runway.dirU > -80)));
+    return !g.crossingTraffic(ac, n);
   }
 
   // Kept for callers that only want to know whether a departure could go now.
