@@ -130,7 +130,7 @@ works too (`123` for `BAW123`). You can chain commands: `BAW123 tl 180 d 4000 s 
 | `app 26R [via FIX]` | Cleared for the approach on a pre-made transition from the aircraft's side of the airport (downwind, base or straight in), ending lined up with the runway at the IF; or name the entry fix. Descends via the published altitudes, then ILS |
 | `hold [fix] [inbound] [L\|R] [1.5M]` | Hold as published, or with your own inbound course, turns and leg time |
 | `res` | Resume own navigation on the route |
-| `ga` | Go around |
+| `ga` | Go around (arrivals and circuit traffic) |
 | `cl` | Cleared to land (tower). Circuit traffic: cleared touch and go (cleared to land on the last circuit) |
 | `fs` | Circuit traffic: make this circuit a full stop |
 | `ext` / `base` | Circuit traffic: extend downwind (beyond 4 nm it holds in a racetrack on the downwind side) / turn base now |
@@ -161,13 +161,16 @@ yellow VFR strips and squawk 7010, and ask Ground to taxi for 2–5 circuits. To
 from an intersection near the ramp), then they fly the circuit at 1000 ft about 1 nm from the runway, on the side away from the other runway:
 upwind, crosswind, downwind, base and final. They call downwind and final. Clear each touch and go with `cl` (they go
 around without it, or if the runway is occupied), shape them around the jets with `ext`, `base` and `orbit`, and end the
-detail early with `fs`. After the last circuit they land and taxi back to the ramp.
+detail early with `fs`, or send them around with `ga`. They refuse headings, levels, speeds and routings. After the last
+circuit they land and taxi back to the ramp. If the runway direction changes, they join crosswind for the new runway.
 
 Traffic is kept realistic. At Ravenwood at most two are in the circuit at once (one in high traffic). Manchester needs
-prior permission for circuit training, so there is at most one, and none in high traffic. The AI tower only lets them turn
-in when no IFR arrival is within 9 nm (7 nm for a full stop), lets waiting departures go first, and after 4 minutes
-without a gap makes the circuit a full stop. An extended aircraft holds in a racetrack 2.5–4 nm out on the downwind side,
-so it never drifts away from the circuit. Light aircraft need 2 minutes behind a medium
+prior permission for circuit training, so there is at most one, and none in high traffic. The AI tower turns one in only
+if the next IFR arrival will still be 3 nm out when it touches down (counting its own way in from the downwind), and never
+with a departure lined up. After 4 minutes without a gap it makes the circuit a full stop, and after 6 it stops lining
+departures up until the light aircraft is in. While circuits are flying, new IFR arrivals go to the other runway where
+there is one. An extended aircraft holds in a racetrack 2.5–4 nm out on the downwind side, so it never drifts away. In
+the combined position the AI tower handles circuit traffic until you give it an instruction yourself. Light aircraft need 2 minutes behind a medium
 and 3 behind a heavy (wake penalty), and two aircraft closer than 0.3 nm and 300 ft count as an airprox.
 
 ### Emergencies

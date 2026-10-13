@@ -23,7 +23,7 @@ const COMMAND_HELP = [
   [`APP ${EX.arr} [VIA ${EX.fix}]`, 'Cleared approach: a pre-made transition from the side the aircraft is on (downwind, base or straight-in), curving onto the final at the IF; descends via, then ILS'],
   ['HOLD [fix] [inbound] [L|R] [1.5M]', 'Hold: as published, or with your own inbound course / turns / leg time'],
   ['RES', 'Resume own navigation on the route'],
-  ['GA', 'Go around'],
+  ['GA', 'Go around (arrivals and circuit traffic)'],
   ['CL', 'Cleared to land (tower) — without it arrivals go around at 1 nm; for circuit traffic: cleared touch and go (or to land on the last circuit)'],
   ['FS', 'Circuit traffic: make this one a full stop'],
   ['EXT / BASE', 'Circuit traffic: extend downwind (beyond 4 nm it holds in a racetrack on the downwind side) / turn base now'],
