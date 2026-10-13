@@ -211,7 +211,8 @@ Object.assign(Radar.prototype, {
     if (!g.userOwns(ac)) {
       return this.openPop(`${cs} — with ${POSITIONS[ac.owner].name}${ac.owner !== 'CTR' ? ' (AI)' : ''}`, [['Not on your frequency', '']], sx, sy);
     }
-    if (f.field === 'cfl') {
+    const cct = ac.airborne && ac.circuit; // circuit traffic: every tag field opens its circuit menu
+    if (f.field === 'cfl' && !cct) {
       const items = [];
       const lvl = (a) => (a >= AIRPORT.transAlt + 500 ? `FL${Math.round(a / 100)}` : `${a}`);
       for (let fl = 380; fl >= 70; fl -= 10) items.push([lvl(fl * 100), `${cs} a FL${fl}`]);
@@ -219,7 +220,7 @@ Object.assign(Radar.prototype, {
       const cur = lvl(Math.round(ac.tgtAlt / 1000) * 1000 >= AIRPORT.transAlt + 500 ? Math.round(ac.tgtAlt / 1000) * 1000 : Math.round(ac.tgtAlt / 1000) * 1000);
       return this.openPop(`${cs} cleared level`, items, sx, sy, { current: cur });
     }
-    if (f.field === 'nav') {
+    if (f.field === 'nav' && !cct) {
       // Heading list plus own navigation; the next-fix part of the tag opens directs too.
       const items = [];
       if (ac.route.length && ac.mode !== 'route') items.push(['Own navigation (resume)', `${cs} res`, 'opt']);
@@ -235,7 +236,7 @@ Object.assign(Radar.prototype, {
       const cur = ac.mode === 'heading' ? Geo.fmtHdg(Math.round(ac.tgtHdg / 5) * 5) : null;
       return this.openPop(`${cs} heading / direct`, items, sx, sy, { current: cur, turn: true });
     }
-    if (f.field === 'spd') {
+    if (f.field === 'spd' && !cct) {
       const items = [['No speed restriction', `${cs} s rs`, 'opt']];
       for (let v = 300; v >= 160; v -= 10) items.push([String(v), `${cs} s ${v}`]);
       return this.openPop(`${cs} speed`, items, sx, sy, { current: ac.tgtSpd ? String(ac.tgtSpd) : null });
@@ -250,6 +251,7 @@ Object.assign(Radar.prototype, {
       if (!c.extend && ['upwind', 'crosswind', 'downwind'].includes(c.phase)) items.push(['Extend downwind', `${cs} ext`]);
       if (c.extend || c.phase === 'downwind') items.push(['Turn base now', `${cs} base`]);
       items.push(['Orbit left', `${cs} orbit l`], ['Orbit right', `${cs} orbit r`]);
+      if (['base', 'final'].includes(c.phase)) items.push(['Go around', `${cs} ga`]);
     } else if (ac.airborne) {
       const next = ac.owner === 'APP' ? (ac.isArr ? 'TWR' : 'CTR') : ac.owner === 'TWR' && !ac.isArr ? 'APP' : null;
       if (next && g.position !== 'ALL') items.push([`Transfer to ${POSITIONS[next].short}`, `${cs} ho`]);

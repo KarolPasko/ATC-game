@@ -297,7 +297,7 @@ class UI {
     else status = ac.route[0] || '';
     const proc = ac.vfr ? 'VFR' : ac.isArr ? ac.star : ac.sid;
     const mine = g.userOwns(ac) ? '' : ' notmine';
-    return `<div class="strip ${ac.isArr ? 'arr' : 'dep'}${sel}${conf}${mine}" data-cs="${esc(ac.cs)}">
+    return `<div class="strip ${ac.vfr ? 'vfr' : ac.isArr ? 'arr' : 'dep'}${sel}${conf}${mine}" data-cs="${esc(ac.cs)}">
       <div class="cs">${esc(ac.cs)}<span class="wt">${esc(ac.type)}/${ac.wake}</span><span class="own own-${ac.owner}">${ac.owner}</span></div>
       <div class="rt">${esc(ac.isArr ? ac.orig : ac.dest)} · ${esc(proc)} · ${esc(ac.rwy)}</div>
       <div class="al">${esc(alt)}</div>
@@ -359,7 +359,7 @@ class UI {
         quick = btn('Contact Ground', 'ho');
       } else if (['stand', 'pushback', 'taxi'].includes(ac.state)) {
         if (!ac.isArr && !ac.cleared) quick += btn('CAF', 'caf');
-        if (ac.state === 'stand' && !ac.isArr) quick += btn(`Push, face ${AIRPORT.pushDirs.E}`, 'pb e') + btn(`Push, face ${AIRPORT.pushDirs.W}`, 'pb w');
+        if (ac.state === 'stand' && !ac.isArr && !GROUND.stands[ac.stand]?.ga) quick += btn(`Push, face ${AIRPORT.pushDirs.E}`, 'pb e') + btn(`Push, face ${AIRPORT.pushDirs.W}`, 'pb w');
         if (ac.state === 'taxi' && ac.crossStop() >= 0) quick += btn(`Cross ${GROUND.runwayName(GROUND.nodes[ac.taxiPath[ac.crossStop()]].phys, this.game)}`, 'cross');
         if (ac.isArr || ac.cleared) quick += btn(ac.isArr ? `Taxi to stand ${ac.stand}` : `Taxi to ${GROUND.departureHold(ac)}`, 'taxi') + btn('Taxi…', 'taxi ');
         if (ac.state === 'taxi' && ac.taxiPath.length) quick += ac.holdPos ? btn('Continue', 'cont') : btn('Hold position', 'hpos');
@@ -373,8 +373,10 @@ class UI {
         const c = ac.circuit;
         if (!c.clr) quick += btn(c.left > 0 ? 'Cleared T&G' : 'Cleared to land', 'cl');
         if (c.left > 0) quick += btn('Full stop', 'fs');
-        quick += c.extend ? btn('Turn base', 'base') : btn('Extend downwind', 'ext');
+        if (c.extend) quick += btn('Turn base', 'base');
+        else if (['upwind', 'crosswind', 'downwind'].includes(c.phase)) quick += btn('Extend downwind', 'ext');
         quick += btn('Orbit', 'orbit');
+        if (['base', 'final'].includes(c.phase)) quick += btn('Go around', 'ga');
       } else if (ac.state === 'air') {
         quick = btn('Heading…', 'h ') + btn('Alt…', 'a ') + btn('Speed…', 's ') + btn('Direct…', 'dct ');
         quick += btn('Hold…', 'hold ');
@@ -392,7 +394,7 @@ class UI {
         if (ac.mode !== 'route' && ac.route.length && !ac.est) quick += btn('Resume', 'res');
       }
       html = `
-        <div class="card-head ${ac.isArr ? 'arr' : 'dep'}">
+        <div class="card-head ${ac.vfr ? 'vfr' : ac.isArr ? 'arr' : 'dep'}">
           <b>${esc(ac.cs)}</b> <span>${esc(ac.type)}/${ac.wake}</span> <span class="sq">SQ ${esc(ac.squawk)}</span>
         </div>
         <table>

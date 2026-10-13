@@ -149,7 +149,7 @@ System commands: `.gnd`, `.radar`, `.autotaxi`, `.pos gnd|twr|app|all`, `.pause`
 
 `app RWY` clears an arrival for a pre-made transition chosen from where it is: a downwind leg past the airfield, a base leg,
 or straight in from behind. Each transition ends with a constant-radius turn (an RF leg) that rolls out exactly on the
-extended centreline at the IF, 10–13 nm out, so aircraft no longer cut across the airfield or join the final at a wide
+extended centreline at the IF, 11–14 nm out, so aircraft no longer cut across the airfield or join the final at a wide
 angle. The localizer is captured only once the aircraft is on the straight part of the final. Name the entry with
 `app 23R via NW23R`, or right-click a fix and pick *Cleared approach … via*. The scope draws the transitions for the arrival
 runways.

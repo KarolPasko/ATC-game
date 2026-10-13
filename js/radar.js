@@ -172,7 +172,7 @@ class Radar {
       if (fix) return this.openMenu(fix, ac, e.offsetX, e.offsetY);
       const rbl = this.hitRbl(e.offsetX, e.offsetY);
       if (rbl >= 0) { this.rbls.splice(rbl, 1); return; }
-      if (!ac.airborne) return;
+      if (!ac.airborne || ac.circuit) return; // circuit traffic flies its own pattern
       const p = this.toWorld(e.offsetX, e.offsetY);
       g.commands.execute(`${ac.cs} h ${Geo.fmtHdg(Geo.bearing(ac, p))}`);
     });
@@ -188,6 +188,10 @@ class Radar {
   openMenu(fix, ac, sx, sy) {
     const items = [];
     const cs = ac.cs;
+    if (ac.airborne && ac.circuit) {
+      this.showMenu(cs, 'VFR circuit', [['In the circuit: no directs or holds (click its tag for ext, base, orbit, fs, ga)', '']], sx, sy);
+      return;
+    }
     const air = ac.airborne;
     items.push([`Direct ${fix.name}`, `${cs} dct ${fix.name}`]);
     if (air) {
@@ -230,7 +234,10 @@ class Radar {
     }
     if (ac.state === 'stand' && !ac.isArr) {
       if (!ac.cleared) items.push(['Cleared as filed', `${cs} caf`]);
-      else items.push([`Push back, face ${AIRPORT.pushDirs.E}`, `${cs} pb e`], [`Push back, face ${AIRPORT.pushDirs.W}`, `${cs} pb w`], [`Taxi to ${GROUND.departureHold(ac)}`, `${cs} taxi`]);
+      else {
+        if (!GROUND.stands[ac.stand]?.ga) items.push([`Push back, face ${AIRPORT.pushDirs.E}`, `${cs} pb e`], [`Push back, face ${AIRPORT.pushDirs.W}`, `${cs} pb w`]);
+        items.push([`Taxi to ${GROUND.departureHold(ac)}`, `${cs} taxi`]);
+      }
     }
     if (ac.state === 'ground') items.push([`Line up runway ${ac.rwy}`, `${cs} lu`], [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
     if (ac.state === 'lineup') items.push(ac.ctoPending ? ['Already cleared for take-off', ''] : [`Cleared for take-off ${ac.rwy}`, `${cs} cto`]);
@@ -241,7 +248,10 @@ class Radar {
     }
     if (ac.isArr && ac.airborne && ac.ils && !ac.landClr) items.push([`Cleared to land ${ac.rwy}`, `${cs} cl`]);
     if (ac.isArr && ac.airborne) items.push(['Go around', `${cs} ga`]);
-    if (ac.airborne && !ac.isArr && ac.owner === 'TWR') items.push(['Contact Departure', `${cs} ho`]);
+    if (ac.airborne && ac.circuit) {
+      if (!ac.circuit.clr) items.push([ac.circuit.left > 0 ? 'Cleared touch and go' : 'Cleared to land', `${cs} cl`]);
+      if (['base', 'final'].includes(ac.circuit.phase)) items.push(['Go around', `${cs} ga`]);
+    } else if (ac.airborne && !ac.isArr && ac.owner === 'TWR') items.push(['Contact Departure', `${cs} ho`]);
     if (!items.length) items.push(['No instructions available', '']);
     this.showMenu(`${cs} ${ac.type}`, ac.state.toUpperCase(), items, sx, sy);
   }
