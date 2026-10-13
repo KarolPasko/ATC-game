@@ -96,7 +96,7 @@ class AIController {
       let d;
       if (o.circuit) { // circuit traffic turning in, or one the tower is about to fit in after a long wait
         if (['base', 'final'].includes(o.circuit.phase)) d = o.finalGeometry().along;
-        else if (this.circuitOverdue(o)) d = 4;
+        else if (this.circuitOverdue(o) && this.circuitRoom(o, true)) d = 4; // only departures are in its way
         else continue;
       }
       else { if (!o.isArr || !o.ils) continue; d = o.est ? o.finalGeometry().along : this.remaining(o); }
@@ -194,11 +194,9 @@ class AIController {
   // the final): an IFR arrival landing before it must be the wake interval ahead (2 minutes for a medium, 3 for a
   // heavy); one landing after it must still be 3 nm out (4 for a full stop, which has to vacate) at its touchdown.
   // Nothing lined up or rolling, nothing else turning in, wake time behind the last heavy or medium.
-  circuitRoom(ac) {
+  circuitRoom(ac, ignoreDepartures = false) {
     const g = this.game, phys = ac.runway.phys, c = ac.circuit;
-    const { along, lateral } = ac.finalGeometry();
-    const gaNm = Math.max(along, CIRCUIT.baseAlong) + Math.max(0, CIRCUIT.baseAlong - along) + Math.abs(lateral);
-    const gaHours = gaNm / Math.max(50, (ac.perf.cct + ac.perf.vapp) / 2);
+    const gaHours = this.circuitTimeIn(ac), along = ac.finalGeometry().along;
     for (const o of g.aircraft) {
       if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
       if (o.isArr && !o.vfr) { // every IFR arrival for this runway, cleared for the approach yet or not
@@ -210,12 +208,21 @@ class AIController {
       }
       if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
     }
-    if (g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && ['lineup', 'takeoff', 'touchgo'].includes(o.state))) return false;
+    if (g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && (o.state === 'touchgo' || (!ignoreDepartures && ['lineup', 'takeoff'].includes(o.state))))) return false;
     // Let a departure that has been waiting a while go first, unless this one has waited longer still.
-    if (!this.circuitOverdue(ac) && g.aircraft.some((o) => !o.vfr && o.state === 'ground' && o.cleared && o.runway?.phys === phys && g.time - (o.waitSince ?? g.time) > 45)) return false;
+    if (!ignoreDepartures && !this.circuitOverdue(ac) && g.aircraft.some((o) => !o.vfr && o.state === 'ground' && o.cleared && o.runway?.phys === phys && g.time - (o.waitSince ?? g.time) > 45)) return false;
     const last = g.lastLanding[phys];
     if (last && g.time - last.t < (last.wake === 'H' ? 180 : 120) - 80) return false; // ~80 s from base to touchdown
     return true;
+  }
+
+  // Hours a circuit aircraft needs from where it is to touchdown: on along the downwind (tailwind), the base leg, then
+  // the final into the wind. A light aircraft's ground speed on final drops a lot in a headwind.
+  circuitTimeIn(ac) {
+    const { along, lateral } = ac.finalGeometry(), p = ac.perf;
+    const hw = WIND.spd * Math.cos(Geo.rad(WIND.dir - ac.runway.heading)); // headwind component on final
+    const downwind = Math.max(0, CIRCUIT.baseAlong - along), final = Math.max(along, CIRCUIT.baseAlong);
+    return downwind / Math.max(40, p.cct + hw) + Math.abs(lateral) / Math.max(40, p.cct) + final / Math.max(35, p.vapp - hw);
   }
 
   // Extended for 6 minutes or more: the tower stops lining departures up so it can fit the light aircraft in.
@@ -260,6 +267,13 @@ class AIController {
     }
     const buffer = AIRPORT.seqBuffer ?? 4; // extra miles for compression on final
     const need = (lead, ac) => (lead.wake === 'H' ? (ac.wake === 'H' ? 4 : 5) : 3) + buffer;
+    // A light aircraft that has waited 6 minutes for a gap gets one: it takes a slot in the arrival sequence, at the
+    // distance a jet would cover while it flies in (about twice its own way in), and the arrivals behind give it room.
+    for (const o of g.aircraft) {
+      if (!this.circuitOverdue(o) || !o.airborne) continue;
+      const slot = { ac: { wake: 'M', owner: 'TWR', perf: o.perf, slot: true }, rem: this.circuitTimeIn(o) * 150 };
+      for (const rwy of Object.keys(byRwy)) if (RUNWAYS[rwy].phys === o.runway.phys) byRwy[rwy].push(slot);
+    }
     for (const list of Object.values(byRwy)) {
       const flowing = list.filter((e) => e.ac.mode !== 'hold').sort((a, b) => a.rem - b.rem);
       const holding = list.filter((e) => e.ac.mode === 'hold').sort((a, b) => a.ac.holdSince - b.ac.holdSince);

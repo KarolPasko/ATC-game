@@ -152,8 +152,8 @@ class Game {
       return !this.aircraft.some((a) => a.state === 'air' && Geo.dist(a, e) < 12);
     });
     if (!stars.length) return null;
-    // While light aircraft are in the circuit, new IFR arrivals go to the other runway when there is one.
-    const cct = new Set(this.aircraft.filter((a) => a.vfr && !['gone', 'parked'].includes(a.state)).map((a) => a.runway?.phys));
+    // While light aircraft are flying circuits, new IFR arrivals go to the other runway when there is one.
+    const cct = new Set(this.aircraft.filter((a) => a.circuit && (a.airborne || a.state === 'touchgo')).map((a) => a.runway?.phys));
     const clear = stars.filter((s) => !cct.has(RUNWAYS[s.rwy]?.phys));
     if (clear.length) stars = clear;
     const star = rnd(stars);

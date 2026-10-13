@@ -105,9 +105,12 @@ function approachSet(rwy, names, { ifAlong, ifAlt, iafAlt, dwAlt = iafAlt, fafAl
   let xb = null;
   if (Object.keys(sides).length === 1) {
     xb = `XB${rwy}`;
-    const len = Geo.dist(RUNWAYS[rwy].thr, RUNWAYS[rwy].opp);
-    addFix(xb, P(-len - 7, 0), 'tp', Math.max(dwAlt, (AIRPORT.sidTop || 6000) + 1000));
-    paths[xb] = [xb, ...paths[main.dw]];
+    const len = Geo.dist(RUNWAYS[rwy].thr, RUNWAYS[rwy].opp), s = +Object.keys(sides)[0];
+    const xAlt = Math.max(dwAlt, (AIRPORT.sidTop || 6000) + 1000);
+    addFix(xb, P(-len - 7, 0), 'tp', xAlt);
+    // Level until abeam the field on the downwind side, clear of the climb-out, then down along the downwind.
+    addFix(`XD${rwy}`, P(-len / 2, s * L), 'tp', xAlt);
+    paths[xb] = [xb, `XD${rwy}`, ...paths[main.de]];
   }
   APPROACHES[rwy] = {
     rwy, if: names.if, faf: names.faf, straightIn: names.straightIn, ifAlong: A, side: sides[primary] ? primary : +Object.keys(sides)[0],
