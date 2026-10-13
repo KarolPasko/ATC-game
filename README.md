@@ -167,9 +167,10 @@ circuit they land and taxi back to the ramp. If the runway direction changes, th
 
 Traffic is kept realistic. At Ravenwood at most two are in the circuit at once (one in high traffic). Manchester needs
 prior permission for circuit training, so there is at most one, and none in high traffic. The AI tower turns one in only
-if the next IFR arrival will still be 3 nm out when it touches down (counting its own way in from the downwind), and never
-with a departure lined up. After 4 minutes without a gap it makes the circuit a full stop, and after 6 it stops lining
-departures up until the light aircraft is in. While circuits are flying, new IFR arrivals go to the other runway where
+if the next IFR arrival will still be 3 nm out when it touches down (counting its own way in from the downwind, with the
+wind), follows an arrival landing ahead at the wake interval (2 minutes behind a medium, 3 behind a heavy), and never with
+a departure lined up. After 4 minutes without a gap it makes the circuit a full stop; after 6 the AI approach controller
+opens a gap in the arrivals for it, and the tower holds departures if they are what is in the way. While circuits are flying, new IFR arrivals go to the other runway where
 there is one. An extended aircraft holds in a racetrack 2.5–4 nm out on the downwind side, so it never drifts away. In
 the combined position the AI tower handles circuit traffic until you give it an instruction yourself. Light aircraft need 2 minutes behind a medium
 and 3 behind a heavy (wake penalty), and two aircraft closer than 0.3 nm and 300 ft count as an airprox.
