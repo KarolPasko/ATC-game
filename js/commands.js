@@ -243,7 +243,7 @@ class CommandProcessor {
         if (r !== ac.rwy) return `unable, we are at the holding point for runway ${ac.rwy}`;
         if (ac.state === 'lineup' && cmd === 'LU') return 'already lined up';
         if (ac.state === 'lineup' && ac.ctoPending) return 'already cleared for take-off';
-        if (!this.opts.ai && ac.state === 'ground') g.checkRunwayClear(ac);
+        if (!this.opts.ai && ac.state === 'ground') g.checkRunwayClear(ac, cmd === 'LU');
         // From the holding point the aircraft taxis onto the runway; a take-off clearance rolls once aligned.
         if (ac.state === 'ground') ac.beginLineup(cmd === 'CTO');
         else if (cmd === 'CTO') {

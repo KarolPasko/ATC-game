@@ -517,9 +517,12 @@ class Game {
     }
   }
 
-  checkRunwayClear(ac) {
+  // Line-up or take-off clearance with the runway not clear. Lining up behind landing traffic that is already well down
+  // the runway is allowed (as the AI tower does); only traffic still near the threshold counts then.
+  checkRunwayClear(ac, lineUp = false) {
+    const behind = (o) => lineUp && o.finalGeometry(ac.runway).along < -0.35;
     const busy = this.aircraft.find((o) => o !== ac && (o.crossing === ac.runway.phys || (o.runway?.phys === ac.runway.phys && (
-      ['lineup', 'takeoff', 'landed', 'touchgo'].includes(o.state) || (o.state === 'taxi' && o.vacating) ||
+      ['lineup', 'takeoff', 'touchgo'].includes(o.state) || ((o.state === 'landed' || (o.state === 'taxi' && o.vacating)) && !behind(o)) ||
       (o.est && o.finalGeometry().along < 2.5) || (o.circuit?.phase === 'final' && o.finalGeometry().along < 1) ||
       (o.state === 'air' && !o.isArr && o.alt < 300)))));
     if (busy) this.addScore(-50, `Runway ${ac.rwy} not clear — ${busy.cs} is on the runway / short final`);

@@ -116,10 +116,10 @@ class AIController {
     if (this.nextArrival(ac) < 5) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
       o.state === 'lineup' || o.state === 'takeoff' || o.state === 'touchgo' || (!o.isArr && o.airborne && o.alt < 300 && this.climbingOut(o)) ||
-      (o.state === 'landed' && o.finalGeometry(ac.runway).along > -0.35)))));
+      ((o.state === 'landed' || (o.state === 'taxi' && o.vacating)) && o.finalGeometry(ac.runway).along > -0.35)))));
   }
 
-  // Take-off: runway clear of landing/vacating traffic, next arrival at least 3 nm out, and 1 minute
+  // Take-off: runway clear of landing/vacating traffic, next arrival at least 3 nm out (4.5 for a light aircraft), and 1 minute
   // since the previous departure (2 minutes behind a heavy, for wake turbulence).
   canTakeoff(ac) {
     const g = this.game, phys = ac.runway.phys;
@@ -127,7 +127,8 @@ class AIController {
     const last = this.lastTakeoff[phys];
     const wait = last && (last.heavy || (ac.wake === 'L' && last.wake && last.wake !== 'L') ? 120 : 60);
     if (last && g.time - last.t < wait) return false;
-    if (this.nextArrival(ac) < 3) return false;
+    // A slow light aircraft needs longer to roll, lift off and climb clear of the runway than a jet.
+    if (this.nextArrival(ac) < (ac.wake === 'L' ? 4.5 : 3)) return false;
     return !g.aircraft.some((o) => o !== ac && (o.crossing === phys || (o.runway?.phys === phys && (
       o.state === 'takeoff' || o.state === 'touchgo' || (o.state === 'lineup' && o !== ac) || o.state === 'landed' || (o.state === 'taxi' && o.vacating) ||
       (!o.isArr && o.airborne && o.alt < 1000 && this.climbingOut(o))))));
@@ -189,7 +190,7 @@ class AIController {
     }
   }
 
-  // Room to turn in: the next IFR arrival must still be 3 nm out (3.5 for a full stop, which has to vacate) when the
+  // Room to turn in: the next IFR arrival must still be 3 nm out (4 for a full stop, which has to vacate) when the
   // light aircraft touches down, counting its own way in from where it is (on along the downwind, the base leg, the
   // final). Nothing lined up or rolling, nothing else turning in, wake time behind the last heavy or medium.
   circuitRoom(ac) {
@@ -199,9 +200,9 @@ class AIController {
     const gaHours = gaNm / Math.max(50, (ac.perf.cct + ac.perf.vapp) / 2);
     for (const o of g.aircraft) {
       if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
-      if (o.isArr && o.ils && !o.circuit) {
-        const rem = o.est ? o.finalGeometry().along : this.remaining(o);
-        if (rem - Geo.clamp(o.gs_kt(), 130, 180) * gaHours < (c.left > 0 ? 3 : 3.5)) return false;
+      if (o.isArr && !o.vfr) { // every IFR arrival for this runway, cleared for the approach yet or not
+        const rem = this.remaining(o);
+        if (rem - Geo.clamp(o.gs_kt(), 130, 180) * gaHours < (c.left > 0 ? 3 : 4)) return false;
       }
       if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
     }
