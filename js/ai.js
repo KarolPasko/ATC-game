@@ -190,9 +190,10 @@ class AIController {
     }
   }
 
-  // Room to turn in: the next IFR arrival must still be 3 nm out (4 for a full stop, which has to vacate) when the
-  // light aircraft touches down, counting its own way in from where it is (on along the downwind, the base leg, the
-  // final). Nothing lined up or rolling, nothing else turning in, wake time behind the last heavy or medium.
+  // Room to turn in, counting the light aircraft's own way in from where it is (on along the downwind, the base leg,
+  // the final): an IFR arrival landing before it must be the wake interval ahead (2 minutes for a medium, 3 for a
+  // heavy); one landing after it must still be 3 nm out (4 for a full stop, which has to vacate) at its touchdown.
+  // Nothing lined up or rolling, nothing else turning in, wake time behind the last heavy or medium.
   circuitRoom(ac) {
     const g = this.game, phys = ac.runway.phys, c = ac.circuit;
     const { along, lateral } = ac.finalGeometry();
@@ -201,8 +202,11 @@ class AIController {
     for (const o of g.aircraft) {
       if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
       if (o.isArr && !o.vfr) { // every IFR arrival for this runway, cleared for the approach yet or not
-        const rem = this.remaining(o);
-        if (rem - Geo.clamp(o.gs_kt(), 130, 180) * gaHours < (c.left > 0 ? 3 : 4)) return false;
+        const rem = this.remaining(o), gs = Geo.clamp(o.gs_kt(), 130, 180);
+        if (rem / gs < gaHours) { // it lands first: follow it, once it is inside the base turn, at the wake interval
+          if (rem > Math.max(along, CIRCUIT.baseAlong) - 1) return false;
+          if ((gaHours - rem / gs) * 3600 < (o.wake === 'H' ? 180 : o.wake === 'L' ? 60 : 120)) return false;
+        } else if (rem - gs * gaHours < (c.left > 0 ? 3 : 4)) return false; // it lands after: keep it well behind
       }
       if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
     }

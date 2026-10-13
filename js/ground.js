@@ -551,10 +551,12 @@ Object.assign(Aircraft.prototype, {
     const ktToMs = 0.5144;
     const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 1.8;
     const need = (v * v - vExit * vExit) / (2 * a);
-    // Not into a connector where another aircraft is waiting (e.g. a departure at an intersection holding point).
-    // Traffic moving along the parallel taxiway, or through the connector ahead, will be gone by then.
-    const blocked = (e) => game?.aircraft?.some((o) => o !== this && (o.state === 'lineup' || (['ground', 'taxi'].includes(o.state) && o.spd < 3)) &&
-      Math.min(Geo.dist(o, GROUND.nodes[e.exitNode]), Geo.dist(o, GROUND.nodes[e.rwyNode])) * GROUND.M_PER_NM < 140);
+    // Not into a connector where another aircraft is waiting or is cleared to wait (a departure taxiing to an
+    // intersection holding point there). Traffic just moving along the parallel taxiway will be gone by then.
+    const near = (p, e) => Math.min(Geo.dist(p, GROUND.nodes[e.exitNode]), Geo.dist(p, GROUND.nodes[e.rwyNode])) * GROUND.M_PER_NM < 140;
+    const blocked = (e) => game?.aircraft?.some((o) => o !== this && (
+      ((o.state === 'lineup' || (['ground', 'taxi'].includes(o.state) && o.spd < 3)) && near(o, e)) ||
+      (o.state === 'taxi' && !o.isArr && GROUND.nodes[o.taxiTarget]?.kind === 'hold' && near(GROUND.nodes[o.taxiTarget], e))));
     const options = GROUND.exits[this.rwy]
       .map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign }))
       .filter((e) => e.ahead >= need * 0.9 && !blocked(e))
