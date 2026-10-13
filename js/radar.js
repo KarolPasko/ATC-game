@@ -97,9 +97,9 @@ class Radar {
       this.closeMenu();
       c.setPointerCapture(e.pointerId);
       Object.assign(this.mouse, { down: true, dragged: false, sx: e.offsetX, sy: e.offsetY, x: e.offsetX, y: e.offsetY });
-      // Press-and-hold a waypoint to send the selected aircraft there.
+      // Press-and-hold a waypoint to send the selected aircraft there (not circuit traffic, which flies its own pattern).
       const ac = this.hitAircraft(e.offsetX, e.offsetY);
-      const fix = g.viewMode === 'radar' && !ac && g.selected && this.hitFix(e.offsetX, e.offsetY);
+      const fix = g.viewMode === 'radar' && !ac && g.selected && !(g.selected.airborne && g.selected.circuit) && this.hitFix(e.offsetX, e.offsetY);
       this.press = fix ? { fix, ac: g.selected, t0: performance.now(), done: false } : null;
     });
     c.addEventListener('pointerup', (e) => {
