@@ -147,11 +147,15 @@ class Game {
   // A new arrival on a random STAR. With `along` (0-1) it starts part-way along its route (used at the start of a
   // session so the airspace is already busy), at a level that fits how far in it is.
   spawnArrival(along = 0) {
-    const stars = PROCS[this.config].stars.filter((s) => {
+    let stars = PROCS[this.config].stars.filter((s) => {
       const e = FIXES[s.fixes[0]];
       return !this.aircraft.some((a) => a.state === 'air' && Geo.dist(a, e) < 12);
     });
     if (!stars.length) return null;
+    // While light aircraft are in the circuit, new IFR arrivals go to the other runway when there is one.
+    const cct = new Set(this.aircraft.filter((a) => a.vfr && !['gone', 'parked'].includes(a.state)).map((a) => a.runway?.phys));
+    const clear = stars.filter((s) => !cct.has(RUNWAYS[s.rwy]?.phys));
+    if (clear.length) stars = clear;
     const star = rnd(stars);
     const route = starRoute(star);
     const path = [FIXES[star.fixes[0]], ...route.map((n) => FIXES[n])];
@@ -613,7 +617,12 @@ class Game {
 
   exempt(a, b) {
     // Independent parallel approaches: established, or on the published arc / IF onto the final.
-    const joining = (x) => x.est || (x.app && x.mode === 'route' && (x.route[0] === APPROACHES[x.rwy]?.if || x.route[0] === APPROACHES[x.rwy]?.faf));
+    const joining = (x) => {
+      if (x.est) return true;
+      const ap = APPROACHES[x.rwy], from = x.leg?.fromName;
+      if (!ap || !x.app || x.mode !== 'route' || !from) return false;
+      return (x.route[0] === ap.if && !!ARCS[`${from}>${ap.if}`]) || (x.route[0] === ap.faf && from === ap.if);
+    };
     if (joining(a) && joining(b) && a.rwy !== b.rwy) return true;
     // Departures from the parallel runways on tracks diverging by 15° or more.
     if (!a.isArr && !b.isArr && a.rwy !== b.rwy && a.alt < 6000 && b.alt < 6000 &&

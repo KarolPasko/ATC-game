@@ -100,9 +100,18 @@ function approachSet(rwy, names, { ifAlong, ifAlt, iafAlt, dwAlt = iafAlt, fafAl
   }
   const main = sides[primary] || Object.values(sides)[0];
   const other = Object.entries(sides).find(([s]) => +s !== primary)?.[1];
+  // Transitions on one side only (parallel runways): traffic from the other side crosses behind the runway, 7 nm past
+  // its departure end and above the departures, then joins the downwind.
+  let xb = null;
+  if (Object.keys(sides).length === 1) {
+    xb = `XB${rwy}`;
+    const len = Geo.dist(RUNWAYS[rwy].thr, RUNWAYS[rwy].opp);
+    addFix(xb, P(-len - 7, 0), 'tp', Math.max(dwAlt, (AIRPORT.sidTop || 6000) + 1000));
+    paths[xb] = [xb, ...paths[main.dw]];
+  }
   APPROACHES[rwy] = {
     rwy, if: names.if, faf: names.faf, straightIn: names.straightIn, ifAlong: A, side: sides[primary] ? primary : +Object.keys(sides)[0],
-    sides, paths, outer: main.base, outer2: other?.base || null,
+    sides, paths, outer: main.base, outer2: other?.base || null, xb,
     iafs: [names.straightIn, ...Object.values(sides).flatMap((n) => [n.base, n.dw])],
   };
 }
@@ -141,6 +150,7 @@ function describeEntry(rwy, fix) {
   if (fix === a.straightIn) return 'straight-in';
   if (fix === a.if) return 'the IF';
   if (fix === a.faf) return 'the FAF';
+  if (fix === a.xb) return 'crossing behind the runway to the downwind';
   const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
   for (const [k, n] of Object.entries(a.sides)) {
     const dir = COMPASS[Math.round(Geo.norm(RUNWAYS[rwy].heading + 90 * k) / 45) % 8];
@@ -153,7 +163,9 @@ function describeEntry(rwy, fix) {
 // Approach entries for an aircraft at point p, best first. Behind the final: straight-in (or the IF / FAF when already
 // lined up with it). On a side with transitions: base when abeam or beyond the IF, downwind when abeam the runway or
 // beyond the threshold (joined at its start, or at its end when already on it). On a side without transitions (the
-// parallel runway's side): out to the straight-in IAF. No entry ever takes the aircraft across the airport.
+// parallel runway's side): out to the straight-in IAF from in front of the threshold, or across behind the runway (the
+// cross-over point XB, 7 nm past the departure end) to the downwind from level with or behind it. No entry takes the
+// aircraft across the airport.
 function transitionFor(rwy, p) {
   const a = APPROACHES[rwy], r = RUNWAYS[rwy];
   const dx = p.x - r.thr.x, dy = p.y - r.thr.y, v = Geo.vec(r.heading);
@@ -163,11 +175,12 @@ function transitionFor(rwy, p) {
   const s = Math.abs(lateral) < 1 || !a.sides[Math.sign(lateral)] ? a.side : Math.sign(lateral);
   const n = a.sides[s];
   const sameSide = Math.abs(lateral) < 1 || Math.sign(lateral) === s;
+  // Wrong side (beyond the parallel runway, where this one has no transitions): never across the field or the other
+  // final. In front of the threshold go out to the straight-in IAF; level with or behind the runway, cross behind it.
+  if (!sameSide) return along >= 0 ? [a.straightIn, n.dw] : [a.xb || n.dw, a.straightIn];
   if (cone(Geo.dist(FIXES[a.straightIn], r.thr), 50)) return [a.straightIn, a.if, n.base];
   if (cone(A, 45)) return [a.if, a.straightIn, n.base];
   if (along < A + 1 && cone(fafAlong + 1.5, 35)) return [a.faf, a.if, n.base];
-  // Wrong side: well beyond the departure end, cross behind the runway to the downwind; otherwise out to the straight-in.
-  if (!sameSide) return along < -Geo.dist(r.thr, r.opp) - 6 ? [n.dw, a.straightIn] : [a.straightIn, n.base];
   if (along >= A - 1) return Math.abs(lateral) < 4.5 && along > A + 3 ? [n.bt, n.base, a.straightIn] : [n.base, n.bt, a.straightIn];
   if (along >= 3 && Math.abs(lateral) > 3) return [n.de, n.dw, n.base];
   return [n.dw, n.de, n.base];

@@ -23,7 +23,16 @@ Object.assign(Aircraft.prototype, {
   circuitLeg() { const c = this.circuit; return c ? (c.orbit ? 'ORB' : c.extend && c.phase === 'downwind' ? 'EXT' : CIRCUIT_LEG[c.phase]) : ''; },
 
   flyCircuit(dt, game) {
-    const c = this.circuit, r = this.runway, H = r.heading, s = c.side, p = this.perf;
+    const c = this.circuit;
+    // The runway direction changed: join the circuit for the new runway at the crosswind leg (unless already climbing
+    // out or on a short final, which finish first).
+    const want = AIRPORT.ga?.runway?.[game.config];
+    if (want && want !== this.rwy && RUNWAYS[want] && c.phase !== 'upwind' && !(c.phase === 'final' && this.finalGeometry().along < 1.5)) {
+      this.rwy = want;
+      Object.assign(c, { side: AIRPORT.ga.side?.[want] ?? -1, phase: 'crosswind', clr: false, extend: false, hold: null, extSince: null, orbit: null, called: {} });
+      this.say(game, `runway ${want}, joining crosswind`);
+    }
+    const r = this.runway, H = r.heading, s = c.side, p = this.perf;
     const { along, lateral } = this.finalGeometry();
     const len = Geo.dist(r.thr, r.opp);
     const height = (AIRPORT.elevation || 0) + CIRCUIT.height;

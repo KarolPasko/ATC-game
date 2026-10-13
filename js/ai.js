@@ -94,7 +94,11 @@ class AIController {
     for (const o of this.game.aircraft) {
       if (!o.airborne || o.runway?.phys !== phys) continue;
       let d;
-      if (o.circuit) { if (!['base', 'final'].includes(o.circuit.phase)) continue; d = o.finalGeometry().along; } // circuit traffic turning in
+      if (o.circuit) { // circuit traffic turning in, or one the tower is about to fit in after a long wait
+        if (['base', 'final'].includes(o.circuit.phase)) d = o.finalGeometry().along;
+        else if (this.circuitOverdue(o)) d = 4;
+        else continue;
+      }
       else { if (!o.isArr || !o.ils) continue; d = o.est ? o.finalGeometry().along : this.remaining(o); }
       if (d > -0.5 && d < best) best = d;
     }
@@ -169,10 +173,11 @@ class AIController {
   // turn base, and clear it for the touch-and-go or landing once the runway will be free.
   circuitControl(ac) {
     const g = this.game, c = ac.circuit, phys = ac.runway.phys;
+    if (c.manual) return; // the player has taken it over (combined position)
     if (c.phase === 'downwind' && !c.orbit) {
       const room = this.circuitRoom(ac);
       const along = ac.finalGeometry().along;
-      if (!room && !c.extend && along > -1) { this.cmd(ac, 'ext'); c.extSince = g.time; }
+      if (!room && !c.extend && along > -1) this.cmd(ac, 'ext');
       else if (room && c.extend) this.cmd(ac, 'base');
       // No gap in the traffic for a while: bring it in for a full stop instead of more touch-and-goes.
       else if (c.extend && c.left > 0 && g.time - (c.extSince ?? g.time) > 240) this.cmd(ac, 'fs');
@@ -184,21 +189,32 @@ class AIController {
     }
   }
 
+  // Room to turn in: the next IFR arrival must still be 3 nm out (3.5 for a full stop, which has to vacate) when the
+  // light aircraft touches down, counting its own way in from where it is (on along the downwind, the base leg, the
+  // final). Nothing lined up or rolling, nothing else turning in, wake time behind the last heavy or medium.
   circuitRoom(ac) {
-    const g = this.game, phys = ac.runway.phys;
+    const g = this.game, phys = ac.runway.phys, c = ac.circuit;
+    const { along, lateral } = ac.finalGeometry();
+    const gaNm = Math.max(along, CIRCUIT.baseAlong) + Math.max(0, CIRCUIT.baseAlong - along) + Math.abs(lateral);
+    const gaHours = gaNm / Math.max(50, (ac.perf.cct + ac.perf.vapp) / 2);
     for (const o of g.aircraft) {
       if (o === ac || !o.airborne || o.runway?.phys !== phys) continue;
-      // A touch-and-go needs about 9 nm to the next IFR arrival; a full stop, off the runway sooner, about 7.
-      if (o.isArr && o.ils && !o.circuit && (o.est ? o.finalGeometry().along : this.remaining(o)) < (ac.circuit.left > 0 ? 9 : 7)) return false;
+      if (o.isArr && o.ils && !o.circuit) {
+        const rem = o.est ? o.finalGeometry().along : this.remaining(o);
+        if (rem - Geo.clamp(o.gs_kt(), 130, 180) * gaHours < (c.left > 0 ? 3 : 3.5)) return false;
+      }
       if (o.circuit && ['base', 'final'].includes(o.circuit.phase)) return false; // number two to it
     }
-    if (g.aircraft.some((o) => o !== ac && o.state === 'touchgo' && o.runway?.phys === phys)) return false;
-    // Let a departure that has been waiting a while go first.
-    if (g.aircraft.some((o) => !o.vfr && o.state === 'ground' && o.cleared && o.runway?.phys === phys && g.time - (o.waitSince ?? g.time) > 45)) return false;
+    if (g.aircraft.some((o) => o !== ac && o.runway?.phys === phys && ['lineup', 'takeoff', 'touchgo'].includes(o.state))) return false;
+    // Let a departure that has been waiting a while go first, unless this one has waited longer still.
+    if (!this.circuitOverdue(ac) && g.aircraft.some((o) => !o.vfr && o.state === 'ground' && o.cleared && o.runway?.phys === phys && g.time - (o.waitSince ?? g.time) > 45)) return false;
     const last = g.lastLanding[phys];
     if (last && g.time - last.t < (last.wake === 'H' ? 180 : 120) - 80) return false; // ~80 s from base to touchdown
     return true;
   }
+
+  // Extended for 6 minutes or more: the tower stops lining departures up so it can fit the light aircraft in.
+  circuitOverdue(o) { return !!(o.circuit?.extend && o.circuit.extSince != null && this.game.time - o.circuit.extSince > 360); }
 
   // Kept for callers that only want to know whether a departure could go now.
   runwayFree(ac) { return this.canLineUp(ac) && this.canTakeoff(ac); }

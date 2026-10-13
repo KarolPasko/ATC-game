@@ -47,6 +47,10 @@ const COMMAND_HELP = [
   ['.help', 'Show help'],
 ];
 
+// Instructions a light aircraft in the circuit refuses, and the circuit instructions that hand it to the player.
+const CIRCUIT_REFUSED = new Set(['H', 'TL', 'TR', 'A', 'FL', 'S', 'DCT', 'I', 'APP', 'HOLD', 'RES']);
+const CIRCUIT_CMDS = new Set(['CL', 'FS', 'EXT', 'BASE', 'ORBIT', 'GA']);
+
 const CMD_ALIASES = {
   H: 'H', FH: 'H', HDG: 'H', TL: 'TL', TR: 'TR',
   A: 'A', C: 'A', D: 'A', ALT: 'A', CM: 'A', DM: 'A', FL: 'FL',
@@ -136,6 +140,14 @@ class CommandProcessor {
   apply(ac, cmd, cur) {
     const g = this.game;
     const arg = () => cur.next();
+    if (ac.circuit && ac.airborne) {
+      // VFR circuit traffic flies its own pattern: no vectors, levels, speeds or routings (skip their arguments).
+      if (CIRCUIT_REFUSED.has(cmd)) {
+        while (cur.peek() && !CMD_ALIASES[cur.peek()]) cur.next();
+        return 'unable, we are in the circuit — use ext, base, orbit, fs or ga';
+      }
+      if (CIRCUIT_CMDS.has(cmd) && !this.opts.ai) ac.circuit.manual = true; // the player has taken it over
+    }
     switch (cmd) {
       case 'H': case 'TL': case 'TR': {
         const n = parseInt(arg(), 10);
@@ -269,6 +281,7 @@ class CommandProcessor {
         return `resuming own navigation, direct ${ac.route[0]}`;
       }
       case 'GA':
+        if (ac.circuit && ac.airborne) { ac.circuitGoAround(g, 'going around'); return null; }
         if (!ac.isArr || !ac.airborne) return 'unable';
         ac.goAround(g, 'going around');
         return null;
@@ -387,11 +400,12 @@ class CommandProcessor {
         if (cmd === 'EXT') {
           if (c.phase !== 'downwind' && c.phase !== 'upwind' && c.phase !== 'crosswind') return 'unable, already turning in';
           c.extend = true;
+          c.extSince ??= g.time;
           return 'extending downwind';
         }
         if (cmd === 'BASE') {
           c.extend = false;
-          c.hold = null;
+          c.hold = c.extSince = null;
           if (c.orbit) c.orbit = null;
           if (c.phase === 'downwind' && ac.finalGeometry().along > 0.5) c.phase = 'base';
           return c.phase === 'base' ? 'turning base' : 'wilco, base when ready';
