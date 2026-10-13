@@ -272,9 +272,10 @@ class Radar {
     }
     if (n.kind === 'stand' && ac.isArr && canTaxi) {
       const num = +n.name.slice(2);
-      items.push([`Taxi to stand ${num}`, `${cs} taxi ${num}`]);
+      if (!!GROUND.stands[num]?.ga === !!ac.vfr) items.push([`Taxi to stand ${num}`, `${cs} taxi ${num}`]);
+      else items.push([ac.vfr ? 'Airline stand: light aircraft park on the GA ramp' : 'Light-aircraft parking spot', '']);
     }
-    if (ac.state === 'stand' && !ac.isArr) items.push(['Pushback', `${cs} pb`]);
+    if (ac.state === 'stand' && !ac.isArr && !GROUND.stands[ac.stand]?.ga) items.push(['Pushback', `${cs} pb`]);
     if (ac.state === 'taxi' && ac.taxiPath.length) items.push(ac.holdPos ? ['Continue taxi', `${cs} cont`] : ['Hold position', `${cs} hpos`]);
     if (!items.length) items.push(['No ground instructions for this aircraft here', '']);
     const what = n.kind === 'stand' ? `stand ${n.name.slice(2)}` : `holding point ${n.name}`;

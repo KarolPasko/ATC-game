@@ -62,19 +62,20 @@ Switch the scope to **Ground chart** (tab at the top left, or `.gnd`). It is a d
 
 | | Ravenwood (EGRV) | Manchester (EGCC) |
 | --- | --- | --- |
-| Departure holding points | A1/A7 (08L/26R), B1/B7 (08R/26L) | V5 (23L), V1 (05R), J1 (23R), A1 (05L) |
-| Runway crossings | — | D, F, G, H across 23R/05L (hold short at D1, F1, G1, H1) |
-| Rapid exits | K1–K4, M1–M4 | C (23R), K (05L) |
-| Stands | 1–12, 21–32 | 1–12 (T1/T2/T3), 21–25 (west apron) |
+| Departure holding points | A1–A3 (08L), A7–A5 (26R), B1–B3 (08R), B7–B5 (26L); full length first, then intersections | J1, M1 (23R), A1, AG1 (05L), VA1, VB1 (23L), VE1 (05R) |
+| Runway crossings | — | D, F, G, H across runway 1 (23R/05L): D1, F1, G1, H1 on the terminal side, D2, F2, G2, H2 on the runway 2 side |
+| Rapid exits | K1–K4 (north runway), M1–M4 (south runway) | C (23R), K (05L), VR (05R) |
+| Stands | 1–12, 21–32; GA 91–96 (flying club) | 1–12 (T1/T2/T3), 21–25 (west apron); GA 91–96 (South Side) |
 
 Departures start on a stand and call Delivery. Give them `caf`, then assign the taxi route. Select the aircraft, click the
 taxiways in order, then click the runway holding point and press **Send taxi**, or type it (`taxi A7 via P J3 A` at
-Ravenwood, `taxi V5 via A G V` at Manchester). Aircraft push back in an arc (`pb e` / `pb w` picks the facing), then follow the curves on the chart,
+Ravenwood, `taxi VA1 via A G V` at Manchester). Aircraft push back in an arc (`pb e` / `pb w` picks the facing), then follow the curves on the chart,
 slowing for corners and stopping behind traffic. **At the holding point Ground hands them to Tower automatically.** `lu`/`cto`
 taxis them onto the runway (stop bar off, green lead-on lights); with a take-off clearance they roll once aligned.
 
-**Runway crossings (Manchester):** a departure for runway 23L (05R) stops at the stop bar before runway 23R (05L). Ground
-hands it to Tower and it calls "holding short runway 23R at G1, request crossing". Clear it with `cross` (or right-click ›
+**Runway crossings (Manchester):** in westerly dual-runway operations a departure for runway 23L stops at the stop bar
+before runway 23R (at D1, F1, G1 or H1); in easterly operations it is the arrivals off 05R that cross runway 05L, holding
+at D2 or F2. Ground hands the aircraft to Tower and it calls "holding short runway 23R at G1, request crossing". Clear it with `cross` (or right-click ›
 Cross) when no arrival is within about 3 nm, nothing is rolling towards the crossing and there's room beyond. It counts as
 on the runway until it reports vacated, so an arrival reaching the threshold first will go around.
 

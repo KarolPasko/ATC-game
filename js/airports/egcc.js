@@ -17,7 +17,7 @@ AIRPORTS.EGCC = {
     points. Don't use any of it for real navigation.</p>
     <p><b>Runway use.</b> Westerly dual-runway: arrivals 23R, departures 23L. Easterly dual-runway: arrivals 05R, departures
     05L. Quiet periods and nights: everything on runway 1 (23R or 05L). Runway 1 is next to the terminals, so in westerly
-    operations <b>departures cross runway 23R</b> at F, G or H to reach 23L, and in easterly operations <b>arrivals cross
+    operations <b>departures cross runway 23R</b> at D, F, G or H to reach 23L, and in easterly operations <b>arrivals cross
     runway 05L</b> after landing on 05R. A crossing aircraft stops at the stop bar, Ground hands it to Tower, and Tower clears
     it with <code>cross</code> (or right-click › Cross) once no arrival is within about 3 nm and nothing is rolling towards
     the crossing. It occupies the runway until it reports vacated.</p>

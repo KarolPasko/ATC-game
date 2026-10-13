@@ -474,6 +474,7 @@ Object.assign(Aircraft.prototype, {
       const rwy = GROUND.runwayName(this.crossing, game);
       this.crossing = this.crossClr = null;
       this.crossPast = false;
+      this.gp = null; // re-plan: a route changed mid-crossing may lead back across, and must stop at the bar again
       game.onCrossed(this, rwy);
     }
   },
@@ -551,7 +552,8 @@ Object.assign(Aircraft.prototype, {
     const v = this.spd * ktToMs, vExit = 25 * ktToMs, a = 1.8;
     const need = (v * v - vExit * vExit) / (2 * a);
     // Not into a connector where another aircraft is waiting (e.g. a departure at an intersection holding point).
-    const blocked = (e) => game?.aircraft?.some((o) => o !== this && ['ground', 'taxi', 'lineup'].includes(o.state) &&
+    // Traffic moving along the parallel taxiway, or through the connector ahead, will be gone by then.
+    const blocked = (e) => game?.aircraft?.some((o) => o !== this && (o.state === 'lineup' || (['ground', 'taxi'].includes(o.state) && o.spd < 3)) &&
       Math.min(Geo.dist(o, GROUND.nodes[e.exitNode]), Geo.dist(o, GROUND.nodes[e.rwyNode])) * GROUND.M_PER_NM < 140);
     const options = GROUND.exits[this.rwy]
       .map((e) => ({ ...e, ahead: (e.u - here.u) * dirSign }))

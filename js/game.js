@@ -447,6 +447,8 @@ class Game {
   onVacated(ac) {
     ac.waitSince = this.time;
     if (ac.emg && !ac.emg.done) { ac.emg.done = true; ac.squawk = ac.emg.oldSquawk; }
+    // Still with Approach (a radio failure lands without ever changing frequency): Ground takes it from here.
+    if (ac.owner !== 'TWR' && ac.owner !== 'GND') this.transfer(ac, 'GND', { ai: true, silent: true });
     if (ac.owner !== 'TWR') {
       this.pilotSay(ac, `vacated via ${ac.vacatedVia}, request taxi to stand ${ac.stand}`);
       return;

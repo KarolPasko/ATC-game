@@ -129,6 +129,8 @@ class CommandProcessor {
       if (!cmd) { rb.push(`say again "${toks[cur.i].toLowerCase()}"?`); cur.i++; continue; }
       const res = this.apply(ac, cmd, cur);
       if (res) rb.push(res);
+      // A refused taxi instruction: its target and VIA list are not commands of their own.
+      if (cmd === 'TAXI' && res && /^(unable|say again)/.test(res)) cur.i = toks.length - 1;
       cur.i++;
     }
     ac._pred = null; // re-predict the flight path
@@ -314,7 +316,7 @@ class CommandProcessor {
       }
       case 'TAXI': {
         if (!['stand', 'pushback', 'taxi', 'ground'].includes(ac.state)) return ac.state === 'landed' ? 'unable, still rolling out' : 'unable';
-        if (!ac.isArr && !ac.cleared) return 'unable, we need our IFR clearance first';
+        if (!ac.isArr && !ac.cleared) return ac.vfr ? 'unable, we need our clearance first' : 'unable, we need our IFR clearance first';
         if (ac.state === 'pushback' && !ac.pushTo) return 'unable';
         // Optional target: holding point (A7), runway (26R), or stand number (12 / S12).
         let target = this.optional(cur, (t) => {
@@ -329,6 +331,7 @@ class CommandProcessor {
         if (!target) return 'say again taxi instructions?';
         // Taxiing to the other parallel runway's holding point: switch runway if a matching departure exists.
         const newRwy = !ac.isArr && !GROUND.depHolds[ac.rwy]?.includes(target) && GROUND.holdRunways(target).find((r) => RUNWAYS[r].heading === ac.runway.heading);
+        if (newRwy && newRwy !== ac.rwy && ac.vfr) return `unable, our circuits are on runway ${ac.rwy}`;
         if (newRwy && newRwy !== ac.rwy) {
           const exit = ac.route[ac.route.length - 1];
           const sid = [PROCS[g.config], ...Object.values(PROCS)].flatMap((p) => p.sids).find((p) => p.rwy === newRwy && p.fixes[p.fixes.length - 1] === exit && sidAllowed(p, ac.type));
@@ -340,6 +343,7 @@ class CommandProcessor {
         if (target.startsWith('ST')) {
           const num = +target.slice(2);
           if (!ac.isArr) return 'unable, we are a departure';
+          if (!!GROUND.stands[num].ga !== !!ac.vfr) return ac.vfr ? 'unable, we park on the GA ramp' : `unable, stand ${num} is a light-aircraft parking spot`;
           if (num !== ac.stand && g.aircraft.some((o) => o !== ac && o.stand === num && o.state !== 'gone' && (o.isArr || o.state === 'stand'))) return `unable, stand ${num} is occupied`;
           ac.stand = num;
         }
